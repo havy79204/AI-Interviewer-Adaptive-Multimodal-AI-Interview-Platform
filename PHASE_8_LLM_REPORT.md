@@ -153,4 +153,3 @@ but no live provider call was verified, no provider rate-limit/load test was run
 path remains deterministic when no key is configured. PostgreSQL and external deployment behavior
 remain unverified.
 
-Changes are not committed.

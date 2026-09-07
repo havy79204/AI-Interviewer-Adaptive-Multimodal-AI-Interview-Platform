@@ -37,6 +37,26 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
     CACHE_TTL: int = 3600
+    REDIS_TIMEOUT_SECONDS: float = 2.0
+    REDIS_SESSION_TTL_SECONDS: int = 300
+    REDIS_LOCK_TTL_SECONDS: int = 30
+    REDIS_LOCK_ACQUIRE_TIMEOUT_SECONDS: float = 0.0
+
+    # PostgreSQL / production pool settings
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_RECYCLE: int = 1800
+
+    # Security / rate limiting
+    AUTH_RATE_LIMIT: int = 10
+    INTERVIEW_RATE_LIMIT: int = 20
+    VOICE_RATE_LIMIT: int = 60
+    LLM_JOB_RATE_LIMIT: int = 5
+
+    # Observability
+    OTEL_SERVICE_NAME: str = "ai-interviewer"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
 
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"

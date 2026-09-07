@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   # ==========================================
   # PostgreSQL Database with pgvector
   # ==========================================
   postgres:
-    image: pgvector/pgvector:pg15-latest
+    image: pgvector/pgvector:pg15
     container_name: ai_interviewer_postgres
     environment:
       POSTGRES_USER: ai_interviewer
@@ -17,15 +15,16 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ai_interviewer"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 10s
 
   # ==========================================
   # Redis - Cache & Message Broker
   # ==========================================
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     container_name: ai_interviewer_redis
     ports:
       - "6379:6379"
@@ -33,9 +32,10 @@ services:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 5s
 
   # ==========================================
   # FastAPI Backend

@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
+from infrastructure.redis_store import RedisClient
 from services.user_store import UserStore
 from utils import get_logger, setup_logging
 
@@ -32,13 +33,24 @@ async def lifespan(app: FastAPI):
         UserStore.ensure_default_admin(settings.BOOTSTRAP_ADMIN_EMAIL, settings.BOOTSTRAP_ADMIN_PASSWORD)
     logger.info(
         "Starting AI Interviewer",
-        environment=settings.ENVIRONMENT,
-        version=settings.APP_VERSION,
+        extra={
+            "environment": settings.ENVIRONMENT,
+            "version": settings.APP_VERSION,
+        },
     )
+    app.state.redis_client = RedisClient(
+        settings.REDIS_URL,
+        namespace="ai",
+        socket_timeout=settings.REDIS_TIMEOUT_SECONDS,
+    )
+    if app.state.redis_client._client is not None:
+        app.state.redis_client.ping()
     
     yield
     
     # Shutdown
+    if hasattr(app.state, "redis_client"):
+        app.state.redis_client.close()
     logger.info("Shutting down AI Interviewer")
 
 
@@ -100,17 +112,47 @@ async def health_check():
     }
 
 
+@app.get("/health/live", tags=["Health"])
+async def health_live():
+    """Liveness probe: process level health only."""
+    return {"alive": True, "service": settings.APP_NAME}
+
+
+@app.get("/health/ready", tags=["Health"])
+async def health_ready():
+    """Readiness probe for required runtime dependencies."""
+    ready = True
+    checks: dict[str, bool | str] = {"database": True, "redis": True}
+    try:
+        from sqlalchemy import create_engine, text
+        engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        ready = False
+        checks["database"] = False
+
+    try:
+        import redis
+        client = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=settings.REDIS_TIMEOUT_SECONDS)
+        client.ping()
+    except Exception:
+        ready = False
+        checks["redis"] = False
+
+    return {"ready": ready, "checks": checks}
+
+
 @app.get("/readiness", tags=["Health"])
 async def readiness_check():
-    """Readiness check endpoint"""
-    # TODO: Check database, cache, external services
-    return {"ready": True}
+    """Backward-compatible readiness alias."""
+    return await health_ready()
 
 
 @app.get("/liveness", tags=["Health"])
 async def liveness_check():
-    """Liveness check endpoint"""
-    return {"alive": True}
+    """Backward-compatible liveness alias."""
+    return await health_live()
 
 
 # ==========================================
