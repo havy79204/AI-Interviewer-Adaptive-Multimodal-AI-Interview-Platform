@@ -1,0 +1,146 @@
+{
+  "doc_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG",
+  "doc_type": "cv",
+  "source_file": "D:\\PHUOC\\RAI_LLM\\RAT_INTERVIEW\\AI-Interviewer-Adaptive-Multimodal-AI-Interview-Platform\\rag\\documents\\data_parser\\cv\\CV_LÊ_NGUYỄN_HOÀNG_LONG.md",
+  "metadata": {
+    "document_type": "cv",
+    "title": "[CV 31] ỨNG TUYỂN: IT SECURITY ANALYST - SOC & THREAT HUNTING (JD 11)",
+    "created_date": null,
+    "updated_date": null,
+    "language": "vi",
+    "candidate_name": "LÊ NGUYỄN HOÀNG LONG",
+    "email": "long.dfir.sec@gmail.com",
+    "phone": "0918 902 334",
+    "location": "Cầu Giấy, Hà Nội",
+    "current_title": null,
+    "experience_years": null,
+    "topics": [],
+    "keywords": [],
+    "skills": [],
+    "education": [],
+    "certifications": []
+  },
+  "chunks": [
+    {
+      "chunk_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG#c001",
+      "doc_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG",
+      "doc_type": "cv",
+      "start_line": 1,
+      "end_line": 5,
+      "heading_path": [
+        "## LÊ NGUYỄN HOÀNG LONG"
+      ],
+      "text": "## [CV 31] ỨNG TUYỂN: IT SECURITY ANALYST - SOC &amp; THREAT HUNTING (JD 11)\n\n## LÊ NGUYỄN HOÀNG LONG\n\nDigital Forensics &amp; Incident Response (DFIR) | SOC Specialist 📍 Cầu Giấy, Hà Nội | 📱 0918 902 334 | ✉️ long.dfir.sec@gmail.com 🔗 LinkedIn: linkedin.com/in/longle-dfir | 🛡️ Hack The Box: Pro Hacker Rank",
+      "metadata": {
+        "title": "LÊ NGUYỄN HOÀNG LONG",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG#c002",
+      "doc_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG",
+      "doc_type": "cv",
+      "start_line": 7,
+      "end_line": 9,
+      "heading_path": [
+        "## [INCIDENT LOG & EXECUTIVE PROFILE]"
+      ],
+      "text": "## [INCIDENT LOG &amp; EXECUTIVE PROFILE]\n\nChuyên viên Phân tích An toàn Thông tin với hơn 3.5 năm kinh nghiệm thực chiến trong các môi trường SOC quy mô lớn và điều tra số (Digital Forensics). Sở hữu năng lực phân tích mã độc bước đầu (Triage Analysis), truy vết dấu vết xâm nhập qua bộ nhớ RAM (Memory Forensics với Volatility) và xây dựng bộ quy tắc phát hiện nguy cơ (Sigma / YARA rules) theo chuẩn MITRE ATT&amp;CK.",
+      "metadata": {
+        "title": "[INCIDENT LOG & EXECUTIVE PROFILE]",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG#c003",
+      "doc_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG",
+      "doc_type": "cv",
+      "start_line": 11,
+      "end_line": 18,
+      "heading_path": [
+        "## 🛡️ NĂNG LỰC KỸ THUẬT & CÔNG CỤ ĐIỀU TRA"
+      ],
+      "text": "## 🛡️ NĂNG LỰC KỸ THUẬT &amp; CÔNG CỤ ĐIỀU TRA\n\n- Hệ thống SIEM / EDR: Microsoft Sentinel (KQL nâng cao), Splunk, CrowdStrike Falcon, SentinelOne, Elastic Security.\n- Điều tra Số &amp; Phân tích Dấu vết: Volatility 3, FTK Imager, Autopsy, KAPE, Wireshark, NetworkMiner.\n- Phân tích Mã độc &amp; Tình báo: Ghidra (cơ bản), YARA, CyberChef, MISP Threat Sharing, VirusTotal Enterprise.\n- Kỹ năng Hệ thống &amp; Scripting: Phân tích Windows Registry / Event Logs, Linux Auditd, Python, PowerShell.\n\n## 💼 DẤU ẤN ĐIỀU TRA THỰC TẾ",
+      "metadata": {
+        "title": "NĂNG LỰC KỸ THUẬT & CÔNG CỤ ĐIỀU TRA",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG#c004",
+      "doc_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG",
+      "doc_type": "cv",
+      "start_line": 20,
+      "end_line": 24,
+      "heading_path": [
+        "## SOC Tier 2 & Incident Response Analyst | VNPT Cyber Immunity (08/2024 - Hiện tại)"
+      ],
+      "text": "## SOC Tier 2 &amp; Incident Response Analyst | VNPT Cyber Immunity (08/2024 - Hiện tại)\n\n- Dập tắt Chiến dịch Tấn công Có chủ đích (APT Simulation): Phát hiện và cô lập thành công một cuộc tấn công chiếm quyền điều khiển Domain Controller thông qua kỹ thuật Pass-the-Hash; truy vết toàn bộ chuỗi hành vi từ bức thư điện tử chứa macro độc hại đến khi kẻ tấn công cố gắng mở Reverse Shell.\n- Tự động hóa phát hiện bằng KQL: Biên soạn hơn 45 quy tắc phát hiện tùy chỉnh (Custom Detection Rules) trên Microsoft Sentinel, giúp nâng cao khả năng phát hiện các hành vi PowerShell Obfuscation và Bitsadmin abuse, giảm tỷ lệ sót lọt cảnh báo xuống dưới 2%.\n- Phản ứng Khẩn cấp (Incident Response): Tham gia đội phản ứng nhanh On-call, trực tiếp chỉ đạo xử lý 8 vụ rò rỉ dữ liệu và mã độc đào tiền ảo trái phép, thời gian từ lúc nhận cảnh báo đến lúc cách ly hoàn toàn hệ thống luôn duy trì dưới 18 phút.",
+      "metadata": {
+        "title": "SOC Tier 2 & Incident Response Analyst | VNPT Cyber Immunity (08/2024 - Hiện tại)",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG#c005",
+      "doc_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG",
+      "doc_type": "cv",
+      "start_line": 26,
+      "end_line": 29,
+      "heading_path": [
+        "## Security Analyst | CyStack Security (06/2023 - 07/2024)"
+      ],
+      "text": "## Security Analyst | CyStack Security (06/2023 - 07/2024)\n\n- Vận hành hệ thống giám sát cảnh báo bảo mật thời gian thực cho hơn 20 khách hàng doanh nghiệp vừa và nhỏ.\n- Tham gia rà quét lỗ hổng ứng dụng Web và mạng nội bộ định kỳ hàng quý bằng Nessus và Burp Suite Pro.",
+      "metadata": {
+        "title": "Security Analyst | CyStack Security (06/2023 - 07/2024)",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG#c006",
+      "doc_id": "CV_LÊ_NGUYỄN_HOÀNG_LONG",
+      "doc_type": "cv",
+      "start_line": 31,
+      "end_line": 35,
+      "heading_path": [
+        "## 📜 BẰNG CẤP & CHỨNG CHỈ QUỐC TẾ"
+      ],
+      "text": "## 📜 BẰNG CẤP &amp; CHỨNG CHỈ QUỐC TẾ\n\n- GIAC Certified Incident Handler (GCIH) - SANS Institute (2025)\n- CompTIA CySA+ (Cybersecurity Analyst) (2024)\n- Kỹ sư An toàn Thông tin - Học viện Công nghệ Bưu chính Viễn thông (PTIT) (2019 - 2023)",
+      "metadata": {
+        "title": "BẰNG CẤP & CHỨNG CHỈ QUỐC TẾ",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    }
+  ],
+  "warnings": []
+}

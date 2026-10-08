@@ -1,0 +1,228 @@
+{
+  "doc_id": "CV_MAI_THÀNH_NAM",
+  "doc_type": "cv",
+  "source_file": "D:\\PHUOC\\RAI_LLM\\RAT_INTERVIEW\\AI-Interviewer-Adaptive-Multimodal-AI-Interview-Platform\\rag\\documents\\data_parser\\cv\\CV_MAI_THÀNH_NAM.md",
+  "metadata": {
+    "document_type": "cv",
+    "title": "[CV 26] ỨNG TUYỂN: SENIOR AI ENGINEER (JD 06)",
+    "created_date": null,
+    "updated_date": null,
+    "language": "vi",
+    "candidate_name": "MAI THÀNH NAM",
+    "email": "nam.maithanh.ai@gmail.com",
+    "phone": "+84 982 110 994",
+    "location": "Cầu Giấy, Hà Nội",
+    "current_title": null,
+    "experience_years": 5.0,
+    "topics": [
+      "thông tin liên hệ",
+      "ứng tuyển",
+      "vị trí senior",
+      "tóm tắt chuyên môn",
+      "thành tựu",
+      "số liệu",
+      "kinh nghiệm làm việc",
+      "kỹ năng kỹ thuật",
+      "học vấn"
+    ],
+    "keywords": [
+      "cầu giấy",
+      "hà nội",
+      "email",
+      "phone",
+      "github",
+      "google scholar",
+      "senior",
+      "ai engineer",
+      "jd 06",
+      "kỹ sư ai",
+      "5 năm",
+      "tối ưu hóa",
+      "giảm 50%",
+      "banking assistant",
+      "chi phí",
+      "qwen-2.5",
+      "awq 4-bit",
+      "lead ai systems engineer",
+      "techcom ai innovation",
+      "computer vision",
+      "nlp engineer",
+      "viettel ai lab",
+      "python",
+      "pytorch",
+      "hugging face",
+      "thạc sĩ",
+      "khoa học máy tính",
+      "kỹ sư",
+      "công nghệ thông tin"
+    ],
+    "skills": [
+      "Python",
+      "PyTorch",
+      "Hugging Face"
+    ],
+    "education": [
+      "Thạc sĩ Khoa học Máy tính",
+      "Kỹ sư Công nghệ Thông tin"
+    ],
+    "certifications": []
+  },
+  "chunks": [
+    {
+      "chunk_id": "CV_MAI_THÀNH_NAM#c001",
+      "doc_id": "CV_MAI_THÀNH_NAM",
+      "doc_type": "cv",
+      "start_line": 1,
+      "end_line": 9,
+      "heading_path": [
+        "## MAI THÀNH NAM"
+      ],
+      "text": "## [CV 26] ỨNG TUYỂN: SENIOR AI ENGINEER (JD 06)\n\n## MAI THÀNH NAM\n\nSenior Applied AI Engineer | LLM Deployment, RAG Systems &amp; High-Throughput Inference\n\n📍 Cầu Giấy, Hà Nội | ✉️ nam.maithanh.ai@gmail.com | 📱 +84 982 110 994\n\nGitHub: github.com/nammt-ai | Google Scholar: Mai Thanh Nam (Citations: 140+)",
+      "metadata": {
+        "title": "MAI THÀNH NAM",
+        "topics": [
+          "thông tin liên hệ",
+          "ứng tuyển",
+          "vị trí senior"
+        ],
+        "keywords": [
+          "cầu giấy",
+          "hà nội",
+          "email",
+          "phone",
+          "github",
+          "google scholar",
+          "senior",
+          "ai engineer",
+          "jd 06"
+        ],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_MAI_THÀNH_NAM#c002",
+      "doc_id": "CV_MAI_THÀNH_NAM",
+      "doc_type": "cv",
+      "start_line": 11,
+      "end_line": 13,
+      "heading_path": [
+        "## EXECUTIVE AI PROFILE"
+      ],
+      "text": "## EXECUTIVE AI PROFILE\n\nKỹ sư AI với 5 năm kinh nghiệm thực tế trong việc đưa các nghiên cứu học sâu (Deep Learning) thành sản phẩm phục vụ người dùng cuối. Chuyên môn sâu về tối ưu hóa mô hình ngôn ngữ lớn (LLM), kỹ thuật Retrieval-Augmented Generation (RAG) nâng cao và tối ưu độ trễ xử lý GPU. Có kinh nghiệm trực tiếp giảm 50% chi phí điện toán hạ tầng AI bằng kỹ thuật lượng tử hóa và suy luận phân tán.",
+      "metadata": {
+        "title": "EXECUTIVE AI PROFILE",
+        "topics": [
+          "tóm tắt chuyên môn"
+        ],
+        "keywords": [
+          "kỹ sư ai",
+          "5 năm",
+          "tối ưu hóa",
+          "giảm 50%"
+        ],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_MAI_THÀNH_NAM#c003",
+      "doc_id": "CV_MAI_THÀNH_NAM",
+      "doc_type": "cv",
+      "start_line": 15,
+      "end_line": 19,
+      "heading_path": [
+        "## KEY ACHIEVEMENTS (SỐ LIỆU THỰC TẾ)"
+      ],
+      "text": "## KEY ACHIEVEMENTS (SỐ LIỆU THỰC TẾ)\n\n- Xây dựng Banking Assistant AI: Thiết kế và đưa vào hoạt động hệ thống trợ lý ảo phục vụ 1.2 triệu khách hàng nội bộ; chỉ số câu trả lời hữu ích (Helpfulness Score) đạt 92%.\n- Giảm chi phí vận hành mô hình: Lượng tử hóa mô hình mã nguồn mở Mistral-Large &amp; Qwen-2.5 xuống định dạng AWQ 4-bit, giảm số lượng máy chủ GPU từ 6 máy xuống còn 2 máy mà độ chính xác giữ nguyên 98.4%.\n- Kiến trúc RAG nâng cao: Ứng dụng Hybrid Search (Qdrant + Reciprocal Rank Fusion) kết hợp Re-ranking, khắc phục tình trạng ảo tưởng (Hallucination) của mô hình từ 18% xuống còn 3.2%.",
+      "metadata": {
+        "title": "KEY ACHIEVEMENTS",
+        "topics": [
+          "thành tựu",
+          "số liệu"
+        ],
+        "keywords": [
+          "banking assistant",
+          "chi phí",
+          "qwen-2.5",
+          "awq 4-bit"
+        ],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_MAI_THÀNH_NAM#c004",
+      "doc_id": "CV_MAI_THÀNH_NAM",
+      "doc_type": "cv",
+      "start_line": 21,
+      "end_line": 36,
+      "heading_path": [
+        "## WORK HISTORY"
+      ],
+      "text": "## WORK HISTORY\n\nLead AI Systems Engineer | TechCom AI Innovation (06/2023 - Hiện tại)\n\n- Dẫn dắt nhóm 4 kỹ sư nghiên cứu và triển khai các Agentic Workflows ứng dụng LlamaIndex phục vụ tự động hóa tra cứu thông tin hợp đồng tín dụng.\n- Thiết lập hệ thống vLLM engine với PagedAttention và Speculative Decoding, nâng tốc độ tạo token (Generation Speed) từ 24 tokens/s lên 78 tokens/s cho mỗi user session.\n- Xây dựng framework tự động đánh giá mô hình ngôn ngữ dựa trên tiêu chí Ragas (Faithfulness, Answer Relevance).\n\nComputer Vision &amp; NLP Engineer | Viettel AI Lab (01/2021 - 05/2023)\n\n- Phát triển pipeline OCR bóc tách văn bản từ hóa đơn GTGT điện tử với độ chính xác F1-score đạt 0.96 sử dụng Donut và LayoutLMv3.\n- Đóng gói mô hình phục vụ suy luận qua Triton Inference Server với C++ backend.\n\n## TECH ARSENAL\n\nPython · PyTorch · Hugging Face · vLLM · LangChain · LlamaIndex · DeepSpeed · Qdrant · Docker · CUDA · Triton",
+      "metadata": {
+        "title": "WORK HISTORY",
+        "topics": [
+          "kinh nghiệm làm việc",
+          "kỹ năng kỹ thuật"
+        ],
+        "keywords": [
+          "lead ai systems engineer",
+          "techcom ai innovation",
+          "computer vision",
+          "nlp engineer",
+          "viettel ai lab",
+          "python",
+          "pytorch",
+          "hugging face"
+        ],
+        "summary": null,
+        "skills": [
+          "Python",
+          "PyTorch",
+          "Hugging Face"
+        ],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_MAI_THÀNH_NAM#c005",
+      "doc_id": "CV_MAI_THÀNH_NAM",
+      "doc_type": "cv",
+      "start_line": 38,
+      "end_line": 41,
+      "heading_path": [
+        "## ACADEMIC BACKGROUND"
+      ],
+      "text": "## ACADEMIC BACKGROUND\n\n- Thạc sĩ Khoa học Máy tính - Viện Công nghệ Quốc gia Hàn Quốc (KAIST) (2019 - 2021)\n- Kỹ sư Công nghệ Thông tin - Đại học Bách Khoa Hà Nội (2014 - 2019)",
+      "metadata": {
+        "title": "ACADEMIC BACKGROUND",
+        "topics": [
+          "học vấn"
+        ],
+        "keywords": [
+          "thạc sĩ",
+          "khoa học máy tính",
+          "kỹ sư",
+          "công nghệ thông tin"
+        ],
+        "summary": null,
+        "skills": [],
+        "education": [
+          "Thạc sĩ Khoa học Máy tính",
+          "Kỹ sư Công nghệ Thông tin"
+        ],
+        "certifications": []
+      }
+    }
+  ],
+  "warnings": []
+}

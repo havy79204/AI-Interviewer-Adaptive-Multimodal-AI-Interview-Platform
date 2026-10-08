@@ -1,0 +1,86 @@
+{
+  "doc_id": "CV_LÝ_THANH_TÙNG",
+  "doc_type": "cv",
+  "source_file": "D:\\PHUOC\\RAI_LLM\\RAT_INTERVIEW\\AI-Interviewer-Adaptive-Multimodal-AI-Interview-Platform\\rag\\documents\\data_parser\\cv\\CV_LÝ_THANH_TÙNG.md",
+  "metadata": {
+    "document_type": "cv",
+    "title": "## [CV 09] ỨNG TUYỂN: MIDDLE QA ENGINEER - AUTOMATION (JD 09)",
+    "created_date": null,
+    "updated_date": null,
+    "language": "vi",
+    "candidate_name": "LÝ THANH TÙNG",
+    "email": null,
+    "phone": null,
+    "location": null,
+    "current_title": null,
+    "experience_years": 3.5,
+    "topics": [],
+    "keywords": [],
+    "skills": [],
+    "education": [],
+    "certifications": []
+  },
+  "chunks": [
+    {
+      "chunk_id": "CV_LÝ_THANH_TÙNG#c001",
+      "doc_id": "CV_LÝ_THANH_TÙNG",
+      "doc_type": "cv",
+      "start_line": 1,
+      "end_line": 9,
+      "heading_path": [
+        "## TÓM TẮT BẢN THÂN"
+      ],
+      "text": "## [CV 09] ỨNG TUYỂN: MIDDLE QA ENGINEER - AUTOMATION (JD 09)\n\n## LÝ THANH TÙNG\n\n## Middle Automation QA Engineer (Playwright / Cypress / API)\n\n## TÓM TẮT BẢN THÂN\n\nQA Engineer với hơn 3.5 năm kinh nghiệm chuyên môn, trong đó có hơn 2.5 năm tập trung vào mảng Automation Testing cho các hệ thống Web và API. Có kinh nghiệm xây dựng Automation Framework từ đầu bằng TypeScript và Playwright, tích hợp trực tiếp vào pipeline CI/CD giúp đội ngũ giảm 60% thời gian thực hiện Regression Test trước mỗi đợt release.",
+      "metadata": {
+        "title": "TÓM TẮT BẢN THÂN",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_LÝ_THANH_TÙNG#c002",
+      "doc_id": "CV_LÝ_THANH_TÙNG",
+      "doc_type": "cv",
+      "start_line": 11,
+      "end_line": 20,
+      "heading_path": [
+        "## BẢNG KỸ NĂNG KIỂM THỬ"
+      ],
+      "text": "## BẢNG KỸ NĂNG KIỂM THỬ\n\n| Mảng Kỹ Thuật       | Công Nghệ & Công Cụ Sử Dụng               |\n|---------------------|-------------------------------------------|\n| Automation Web      | Playwright, Cypress, Selenium WebDriver   |\n| API Testing         | Postman/Newman, RestAssured, SuperTest    |\n| Performance Testing | k6, Apache JMeter                         |\n| Ngôn ngữ lập trình  | TypeScript, JavaScript, Java              |\n| CI/CD & DevOps      | GitHub Actions, Jenkins, Docker           |\n| Quy trình & Quản lý | Agile/Scrum, Jira, TestRail, Zephyr Scale |",
+      "metadata": {
+        "title": "BẢNG KỸ NĂNG KIỂM THỬ",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    },
+    {
+      "chunk_id": "CV_LÝ_THANH_TÙNG#c003",
+      "doc_id": "CV_LÝ_THANH_TÙNG",
+      "doc_type": "cv",
+      "start_line": 22,
+      "end_line": 43,
+      "heading_path": [
+        "## KINH NGHIỆM CHUYÊN MÔN"
+      ],
+      "text": "## KINH NGHIỆM CHUYÊN MÔN\n\nAUTOMATION QA ENGINEER | ShopeePay Logistics Tech\n\n02/2023 - Hiện tại | TP.HCM\n\n- Xây dựng Test Framework: Khởi tạo từ số 0 bộ Automation Framework kiểm thử Web bằng Playwright + TypeScript, áp dụng thiết kế Page Object Model (POM) và chuẩn hóa cấu trúc dữ liệu test bằng JSON Fixtures.\n- Tự động hóa hồi quy (Regression): Chuyển đổi thành công hơn 220 manual test cases quan trọng sang automation script, giảm chu kỳ test hồi quy từ 2 ngày làm việc xuống còn 40 phút chạy song song (parallel execution) trên Docker container.\n- Tích hợp CI/CD: Cấu hình GitHub Actions tự động kích hoạt bộ smoke test cho mỗi Pull Request và gửi báo cáo kết quả kèm video/screenshot các ca fail về nhóm Slack nội bộ.\n- Performance Testing: Sử dụng k6 để mô phỏng tải 10,000 người dùng đồng thời trong các chiến dịch khuyến mãi lớn, kịp thời phát hiện các điểm nghẽn (bottleneck) ở cổng API checkout.\n\nMANUAL &amp; AUTOMATION TESTER | Nashtech Vietnam\n\n## 08/2021 - 01/2023 | TP.HCM\n\n- Thực hiện Manual Functional Testing và API testing (Postman) cho khách hàng khối bảo hiểm y tế tại Úc.\n- Bắt đầu xây dựng các script tự động cơ bản bằng Cypress cho module Quản lý hợp đồng bảo hiểm.\n\n## CHỨNG CHỈ NGHỀ NGHIỆP\n\n- ISTQB Certified Tester - Foundation Level (CTFL) (Cấp năm 2022)\n- Playwright: Web Automation with TypeScript - Udemy Certificate of Completion.",
+      "metadata": {
+        "title": "KINH NGHIỆM CHUYÊN MÔN",
+        "topics": [],
+        "keywords": [],
+        "summary": null,
+        "skills": [],
+        "education": [],
+        "certifications": []
+      }
+    }
+  ],
+  "warnings": []
+}

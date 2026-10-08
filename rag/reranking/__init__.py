@@ -1,1 +1,1 @@
-﻿# rag/reranking module
+﻿print("hello world")
