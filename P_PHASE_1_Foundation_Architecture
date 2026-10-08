@@ -1,0 +1,657 @@
+# AI Interviewer V1 - Core Foundation Design
+
+## 1. Data Ingestion Pipeline: Từ Data Thô Đến Vector Store
+
+### 1.1 Mục tiêu
+
+Xây dựng một pipeline chuẩn hóa dữ liệu đầu vào trước khi lưu vào hệ thống.
+
+Nguồn dữ liệu có thể bao gồm:
+
+* CV / Resume
+* Job Description (JD)
+* Technical Knowledge Documents
+* Company Policies
+* Interview Rubrics
+* Question Banks
+* Markdown Documents
+* PDF Documents
+* DOCX Documents
+
+---
+
+### 1.2 Luồng xử lý tổng quát
+
+```text
+Raw Data
+    ↓
+Document Detection
+    ↓
+Document Parsing
+    ↓
+Structured Data Extraction
+    ↓
+Chunking
+    ↓
+Metadata Generation
+    ↓
+Embedding
+    ↓
+Vector Store (Qdrant)
+```
+
+---
+
+### 1.3 Phân loại dữ liệu
+
+| Data Type     | Đích lưu trữ |
+| ------------- | ------------ |
+| CV            | SQL + Qdrant |
+| JD            | SQL + Qdrant |
+| Knowledge     | Qdrant       |
+| Policy        | Qdrant       |
+| Rubric        | Qdrant       |
+| Question Bank | Qdrant       |
+
+---
+
+### 1.4 Chunking Strategy
+
+#### Knowledge Documents
+
+Áp dụng:
+
+```text
+Semantic Chunking
+```
+
+Ví dụ:
+
+```text
+YOLO Architecture
+YOLO Loss Function
+Non-Maximum Suppression
+Training Strategy
+```
+
+---
+
+#### Job Description
+
+Áp dụng:
+
+```text
+Requirement-Based Chunking
+```
+
+Ví dụ:
+
+```text
+Requirement 1
+Requirement 2
+Requirement 3
+```
+
+---
+
+#### CV
+
+Áp dụng:
+
+```text
+Section-Based Chunking
+```
+
+Ví dụ:
+
+```text
+Education
+Experience
+Projects
+Skills
+Certificates
+```
+
+---
+
+### 1.5 Metadata Standard
+
+Ví dụ:
+
+```json
+{
+    "document_id": "doc_001",
+    "document_type": "knowledge",
+    "topic": "Computer Vision",
+    "subtopic": "Object Detection",
+    "source_file": "yolo.pdf",
+    "chunk_index": 12,
+    "version": 1
+}
+```
+
+---
+
+### 1.6 Vector Store Collections
+
+```text
+jd_collection
+knowledge_collection
+policy_collection
+rubric_collection
+question_bank_collection
+memory_collection
+cv_collection (optional)
+```
+
+---
+
+### 1.7 Duplicate Detection
+
+Mỗi tài liệu khi upload sẽ được tạo:
+
+```text
+SHA256 Hash
+```
+
+Quy trình:
+
+```text
+Upload
+    ↓
+Hash Document
+    ↓
+Already Exists?
+    ├── Yes → Skip / Update
+    └── No → Index
+```
+
+---
+
+### 1.8 Retrieval Verification
+
+Sau khi index xong:
+
+```text
+Upsert Vector
+    ↓
+Test Query
+    ↓
+Verify Retrieval
+    ↓
+Success
+```
+
+Mục tiêu:
+
+* Đảm bảo dữ liệu thực sự truy xuất được.
+* Tránh lỗi index thành công nhưng retrieval thất bại.
+
+---
+
+## 2. Candidate Interview Database
+
+### 2.1 Bảng Candidates
+
+```text
+TABLE candidates {
+    id: UUID PK
+    full_name: VARCHAR
+    email: VARCHAR UNIQUE
+    phone: VARCHAR
+    position: VARCHAR
+    profile: JSONB
+    created_at: TIMESTAMP
+    updated_at: TIMESTAMP
+}
+```
+
+#### profile JSONB
+
+```json
+{
+    "education": [],
+    "experience": [],
+    "projects": [],
+    "skills": [],
+    "certificates": [],
+    "github": "",
+    "linkedin": "",
+    "resume_text": ""
+}
+```
+
+---
+
+### 2.2 Bảng Interviews
+
+```text
+TABLE interviews {
+    id: UUID PK
+
+    candidate_id: UUID FK candidates.id
+
+    status: VARCHAR
+
+    state: JSONB
+
+    started_at: TIMESTAMP
+    completed_at: TIMESTAMP
+
+    created_at: TIMESTAMP
+}
+```
+
+#### state JSONB
+
+```json
+{
+    "current_question": 5,
+    "interview_stage": "technical",
+    "topics_covered": [],
+    "remaining_topics": [],
+    "current_skill_focus": ""
+}
+```
+
+---
+
+### 2.3 Bảng Conversation Messages
+
+```text
+TABLE conversation_messages {
+    id: UUID PK
+
+    interview_id: UUID FK interviews.id
+
+    role: VARCHAR
+
+    content: TEXT
+
+    metadata: JSONB
+
+    created_at: TIMESTAMP
+}
+```
+
+---
+
+### 2.4 Bảng Candidate Scores
+
+```text
+TABLE candidate_scores {
+    id: UUID PK
+
+    candidate_id: UUID FK candidates.id
+
+    interview_id: UUID FK interviews.id
+
+    skill_name: VARCHAR
+
+    score: FLOAT
+
+    confidence: FLOAT
+
+    evidence_count: INTEGER
+
+    updated_at: TIMESTAMP
+}
+```
+
+---
+
+### 2.5 Bảng Skill Evidence
+
+```text
+TABLE skill_evidence {
+    id: UUID PK
+
+    candidate_id: UUID FK candidates.id
+
+    interview_id: UUID FK interviews.id
+
+    message_id: UUID FK conversation_messages.id
+
+    skill_name: VARCHAR
+
+    evidence_text: TEXT
+
+    score_impact: FLOAT
+
+    created_at: TIMESTAMP
+}
+```
+
+---
+
+### 2.6 Bảng Interview Reports
+
+```text
+TABLE interview_reports {
+    id: UUID PK
+
+    candidate_id: UUID FK candidates.id
+
+    interview_id: UUID FK interviews.id
+
+    overall_score: FLOAT
+
+    technical_score: FLOAT
+
+    communication_score: FLOAT
+
+    problem_solving_score: FLOAT
+
+    strengths: JSONB
+
+    weaknesses: JSONB
+
+    summary: TEXT
+
+    created_at: TIMESTAMP
+}
+```
+
+---
+
+### 2.7 Quan hệ dữ liệu
+
+```text
+candidates
+    |
+    +------ interviews
+                |
+                +------ conversation_messages
+                |
+                +------ candidate_scores
+                |
+                +------ skill_evidence
+                |
+                +------ interview_reports
+```
+
+---
+
+### 2.8 Candidate Lifecycle
+
+```text
+Upload CV
+    ↓
+Create Candidate
+    ↓
+Interview Session
+    ↓
+Conversation History
+    ↓
+Skill Assessment
+    ↓
+Evidence Tracking
+    ↓
+Final Report
+```
+
+---
+
+## 3. Data Ingestion Agent System
+
+### 3.1 Mục tiêu
+
+Tự động hóa hoàn toàn quá trình:
+
+```text
+Receive Data
+    ↓
+Classify
+    ↓
+Parse
+    ↓
+Store
+    ↓
+Index
+```
+
+Không cần chạy các script thủ công.
+
+---
+
+### 3.2 Kiến trúc Agent
+
+```text
+Upload Data
+    ↓
+Data Ingestion Agent
+    ↓
+SQL + Qdrant
+```
+
+---
+
+### 3.3 Các Agent Thành Phần
+
+#### Agent 1 - Document Classifier
+
+Nhiệm vụ:
+
+* Xác định loại tài liệu.
+* Chọn pipeline phù hợp.
+
+Output:
+
+```json
+{
+    "document_type": "CV"
+}
+```
+
+hoặc
+
+```json
+{
+    "document_type": "JD"
+}
+```
+
+---
+
+#### Agent 2 - Document Parser
+
+Nhiệm vụ:
+
+* Đọc PDF.
+* Đọc DOCX.
+* Đọc Markdown.
+* Trích xuất nội dung văn bản.
+
+Output:
+
+```text
+Clean Text
+```
+
+---
+
+#### Agent 3 - Structured Extractor
+
+Nhiệm vụ:
+
+* Trích xuất dữ liệu có cấu trúc.
+
+Ví dụ:
+
+CV →
+
+```json
+{
+    "skills": [],
+    "experience": [],
+    "projects": []
+}
+```
+
+JD →
+
+```json
+{
+    "required_skills": [],
+    "requirements": []
+}
+```
+
+---
+
+#### Agent 4 - Storage Router
+
+Nhiệm vụ:
+
+Quyết định nơi lưu dữ liệu.
+
+```text
+Structured Data
+    ↓
+SQL
+
+Semantic Data
+    ↓
+Qdrant
+```
+
+---
+
+#### Agent 5 - Chunking Agent
+
+Nhiệm vụ:
+
+```text
+Text
+    ↓
+Chunks
+```
+
+Áp dụng chiến lược chunk tương ứng từng loại tài liệu.
+
+---
+
+#### Agent 6 - Metadata Agent
+
+Nhiệm vụ:
+
+Tự động sinh metadata.
+
+Ví dụ:
+
+```json
+{
+    "topic": "Computer Vision",
+    "subtopic": "Object Detection",
+    "source": "yolo.pdf"
+}
+```
+
+---
+
+#### Agent 7 - Embedding Agent
+
+Nhiệm vụ:
+
+```text
+Chunk
+    ↓
+Embedding
+```
+
+---
+
+#### Agent 8 - Vector Store Agent
+
+Nhiệm vụ:
+
+```text
+Embedding
+    ↓
+Qdrant Upsert
+```
+
+---
+
+#### Agent 9 - Verification Agent
+
+Nhiệm vụ:
+
+Kiểm tra chất lượng indexing.
+
+```text
+Query Test
+    ↓
+Retrieved?
+    ↓
+Pass / Fail
+```
+
+---
+
+### 3.4 Luồng Agent Hoàn Chỉnh
+
+```text
+START
+    ↓
+Receive Document
+    ↓
+Classify Document
+    ↓
+Parse Document
+    ↓
+Extract Structured Data
+    ↓
+Save SQL
+    ↓
+Chunk Document
+    ↓
+Generate Metadata
+    ↓
+Embedding
+    ↓
+Save Qdrant
+    ↓
+Verify Retrieval
+    ↓
+END
+```
+
+---
+
+### 3.5 Kiến trúc V1 Tổng Thể
+
+```text
+┌──────────────────────────────┐
+│      Data Ingestion Layer    │
+│                              │
+│ CV / JD / Knowledge / Policy │
+│              ↓               │
+│     Data Ingestion Agents    │
+│              ↓               │
+│        SQL + Qdrant          │
+└──────────────────────────────┘
+
+                ↓
+
+┌──────────────────────────────┐
+│   Candidate Management Layer │
+│                              │
+│ Candidate Profile            │
+│ Interview State              │
+│ Skill Assessment             │
+│ Evidence Tracking            │
+│ Final Report                 │
+└──────────────────────────────┘
+
+                ↓
+
+┌──────────────────────────────┐
+│      Interview Agent Layer   │
+│                              │
+│ Adaptive Questioning         │
+│ Answer Evaluation            │
+│ Candidate Scoring            │
+│ Report Generation            │
+└──────────────────────────────┘
+```
