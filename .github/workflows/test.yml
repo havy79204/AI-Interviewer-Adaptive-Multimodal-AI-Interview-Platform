@@ -207,6 +207,7 @@ jobs:
               tests/unit/test_api_interview.py
               tests/unit/test_api_readiness.py
               tests/unit/test_auth_candidate_db.py
+              tests/unit/test_candidate_invitations.py
               tests/unit/test_interview_hardening.py
               tests/unit/test_production_pipeline.py
               tests/unit/test_report_service.py
@@ -215,6 +216,7 @@ jobs:
           - group: database-concurrency
             paths: >-
               tests/unit/test_database_integrity.py
+              tests/unit/test_candidate_invitation_migration.py
               tests/integration/test_phase115c_application_concurrency.py
               tests/isolated/test_distributed_lock_verification.py
           - group: websocket-voice
