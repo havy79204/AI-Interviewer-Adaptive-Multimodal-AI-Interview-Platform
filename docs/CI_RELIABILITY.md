@@ -292,12 +292,32 @@ The local Windows thread timeout is not equivalent to the workflow's Linux signa
 
 UI repository was not modified. Remaining limitations: historic stall cause unresolved; no monolithic full-suite run; no local actionlint or GitHub schema result for the current worktree; no current-workflow GitHub result; and Linux signal/child cleanup is unverified until that workflow runs.
 
-## P0.11 — Pre-publication review status
+## P0.11 — Authorized publication and GitHub verification
 
-No files were staged, committed, pushed, or dispatched. The pre-publication review found that the earlier pytest guard accepted any absolute path with a `live_ai_e2e_` filename. It now additionally requires explicit `RUN_LIVE_AI_E2E=1`, a `LIVE_AI_E2E_DATABASE_URL` equal to `DATABASE_URL`, and a fresh non-symlink database directly under `RUNNER_TEMP` (or the system temporary directory for local runs). The local database instructions in `docs/BACKEND_READINESS.md` now use a fresh `storage/test_*.db` file and reject reuse before applying migrations.
+### Publication and review
 
-Guard checks after this correction: approved relative `storage/ci_*.db` URL accepted; missing URL, application default URL, PostgreSQL URL, and an absolute live-style path outside the temporary root each refused with pytest exit 4; a fresh live-style SQLite path under the temporary root was accepted with explicit opt-in and collection completed (155 tests; exit 0). The test guard passes Ruff, and `git diff --check` passes. No test databases, `.env`, logs, or API credentials were staged; the only credential-like matches in source/documentation scans were synthetic test bootstrap values and an operator placeholder, with values withheld.
+The repository owner authorized publication. The full 51-file P0 backend changeset was committed on feature branch `p0-11-authorized-ci-verification` and opened as [PR #2](https://github.com/tri01012002/AI-Interviewer-Adaptive-Multimodal-AI-Interview-Platform/pull/2), targeting `main`. No UI files, `.env`, local databases, or logs were included. The prepublication secret scan found no provider/GitHub/AWS token or private-key patterns; credential-like matches were synthetic test credentials and a documentation placeholder, not real values. Both live-provider workflow inputs were false; no provider credentials were supplied.
 
-The corrected `docs/BACKEND_READINESS.md` setup was also exercised using a unique `storage/test_backend_readiness_*.db`: Alembic upgraded it to `a4d2_resource_ownership (head)`, the focused security-default tests passed (**2 passed, exit 0**), and the named disposable database was removed.
+### Initial run and matrix correction
 
-**Publication and GitHub result:** authorization to publish has not yet been given. The worktree is on `main`; no current-revision GitHub run exists. Python 3.11/3.12 GitHub execution, five group results on GitHub, Linux timeout-child cleanup, and GitHub workflow schema validation remain **NOT RUN** for this revision. Do not interpret the local collection or prior P0.10 groups as GitHub verification.
+The first PR run, [run #17](https://github.com/tri01012002/AI-Interviewer-Adaptive-Multimodal-AI-Interview-Platform/actions/runs/38192499718), completed with a nominal success conclusion but instantiated only the quality job and the two `rag` jobs (Python 3.11 and 3.12), plus the expected skipped live job. It did **not** run the other four groups. Inspection showed the workflow's matrix had a Python-version axis and group entries only under `include`, so the included group entries overwrote one another. This was a workflow coverage defect, not a test or infrastructure failure. Added an explicit five-value `group` axis in commit `98a031a`; the local structural check then expanded to ten unique group/runtime combinations, and all test paths existed. The initial run is **INCOMPLETE**, not evidence of a complete green pipeline.
+
+### Actual complete run
+
+The corrected workflow, **Backend CI**, ran on the PR synchronize event in [run #18](https://github.com/tri01012002/AI-Interviewer-Adaptive-Multimodal-AI-Interview-Platform/actions/runs/38192594144), commit `98a031a0efebdd23e45be67bbe785071d56f56f0`. It completed **PASS** in 5m50s. GitHub accepted and executed the workflow; this is stronger evidence than local YAML parsing. The quality job passed in 10 seconds, including focused Ruff/whitespace checks, deliberate shell failure propagation, and the Linux signal-timeout child-cleanup probe. The probe log confirmed: “Expected timeout failed the test and fixture cleanup reaped its child.”
+
+| Offline group | Python 3.11 | Duration | Python 3.12 | Duration |
+|---|---:|---:|---:|---:|
+| `fast-unit` | PASS — 38 passed | 4m52s | PASS — 38 passed | 4m05s |
+| `api-security-report` | PASS — 35 passed | 5m08s | PASS — 35 passed | 3m40s |
+| `database-concurrency` | PASS — 18 passed | 3m27s | PASS — 18 passed | 4m22s |
+| `websocket-voice` | PASS — 34 passed | 3m18s | PASS — 34 passed | 3m45s |
+| `rag` | PASS — 25 passed, 1 live test deselected | 3m59s | PASS — 25 passed, 1 live test deselected | 5m48s |
+
+All ten offline group/runtime jobs and the quality job passed. No PostgreSQL/pgvector service was used; Redis initialized successfully for each matrix job. The live-provider job was **SKIPPED** as intended and made no provider calls. No secret values were supplied to or printed by offline jobs. The first run's partial matrix is not counted as full validation; run #18 is the complete result.
+
+### Remaining limitations and next milestone
+
+The historical monolithic suite's 69% stall remains unexplained. The five bounded CI groups pass on both supported Python versions, but this does not establish that a monolithic full-suite execution passes. Live provider quality, production PostgreSQL, and multi-tenant isolation are also not verified by this workflow.
+
+**Next milestone:** use the now-green, bounded CI baseline to diagnose the historical full-suite stall in small, isolated batches, recording the last test and subprocess state if any batch times out. Keep provider-backed checks separately authorized and opt-in.
