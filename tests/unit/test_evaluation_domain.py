@@ -6,8 +6,8 @@ from evaluation.service import (
     AssessmentStatus,
     CompetencyAssessment,
     DeterministicEvaluator,
-    EvidenceStrength,
     EvaluationService,
+    EvidenceStrength,
     Rubric,
 )
 from services.database import InterviewAssessmentRecord, InterviewEvidenceRecord, SessionLocal
@@ -69,13 +69,16 @@ def test_interview_aggregation_does_not_turn_missing_competency_into_zero_assess
 
 def test_answer_persists_evidence_assessment_and_versioned_competency_state():
     service = InterviewService()
-    owner_id = f"evaluation-owner-{uuid4()}"
-    state = service.start_interview(f"evaluation-candidate-{uuid4()}", "AI Engineer", owner_user_id=owner_id)
+    state = service.start_interview(
+        f"evaluation-candidate-{uuid4()}",
+        "AI Engineer",
+        owner_role="admin",
+    )
     service.submit_answer(
         state["interview_id"],
         "I implemented a Python API and reduced latency by 40%.",
         f"evaluation-turn-{uuid4()}",
-        owner_id,
+        role="admin",
     )
 
     with SessionLocal() as session:

@@ -110,6 +110,11 @@ cp .env.example .env
 # Edit .env with your API keys
 ```
 
+Development admin bootstrap is disabled by default. To opt in locally, set
+`ENABLE_DEV_ADMIN_BOOTSTRAP=true` and provide private `BOOTSTRAP_ADMIN_EMAIL` and
+`BOOTSTRAP_ADMIN_PASSWORD` values; never use shared/default credentials or enable it in
+production. Local API binding defaults to `127.0.0.1`.
+
 ### Run with Docker Compose
 
 ```bash
@@ -138,6 +143,17 @@ curl -X POST http://localhost:8000/api/v1/interview/start \
     "mode": "text"
   }'
 ```
+
+### Answer submission and idempotency
+
+Answer requests require an authenticated owner (or authorized administrator) and a client-stable
+`turn_id`. Repeating the same `turn_id` with the same answer replays the stored interview state
+after the first request completes; only one durable turn and its evaluation are created. Requests
+that arrive while that interview is still locked receive `409 Conflict` and can be retried with the
+same ID and answer. Reusing a `turn_id` with a different answer, or submitting a new turn after
+completion, also receives `409 Conflict`. Role-forbidden operations remain `403 Forbidden`;
+inaccessible interviews return `404 Not Found`; unavailable distributed locking returns
+`503 Service Unavailable`.
 
 ---
 
@@ -444,20 +460,20 @@ License - see [LICENSE](LICENSE)
 
 - **Issues**: [GitHub Issues](https://github.com/ai-interviewer/platform/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/ai-interviewer/platform/discussions)
-- **Email**: support@ai-interviewer.com
+- **Email**: tringuyen.01012002@gmail.com
 - **Website**: https://ai-interviewer.com
 
 ---
 
 ## 📈 Roadmap
 
-- [ ] **Q3 2024**: MVP (Text + Voice modes)
-- [ ] **Q4 2024**: Video mode, Browser agent
-- [ ] **Q1 2025**: Multilingual support
-- [ ] **Q2 2025**: Industry-specific templates
-- [ ] **Q3 2025**: Predictive hiring analytics
+- [ ] **Q1 2025**: MVP (Text + Voice modes)
+- [ ] **Q2 2025**: Video mode, Browser agent
+- [ ] **Q3 2025**: Multilingual support
+- [ ] **Q4 2025**: Industry-specific templates
+- [ ] **Q1 2026**: Predictive hiring analytics
 
-See [PROJECT.md](docs/PROJECT.md) for detailed roadmap.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed roadmap.
 
 ---
 
@@ -473,4 +489,4 @@ Built with ❤️ using:
 
 **"Replace 4-6 hour manual interviews with 30-minute adaptive AI interviews. Better decisions, lower costs, fairer hiring."**
 
-[⭐ Star us on GitHub](https://github.com/ai-interviewer/platform)
+[⭐ Star us on GitHub](https://github.com/tri01012002/AI-Interviewer-Adaptive-Multimodal-AI-Interview-Platform)

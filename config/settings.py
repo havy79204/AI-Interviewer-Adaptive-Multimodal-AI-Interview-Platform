@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "info"
 
     # API
-    API_HOST: str = "0.0.0.0"
+    API_HOST: str = "127.0.0.1"
     API_PORT: int = 8000
     API_PREFIX: str = "/api/v1"
 
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     REDIS_TIMEOUT_SECONDS: float = 2.0
     REDIS_SESSION_TTL_SECONDS: int = 300
     REDIS_LOCK_TTL_SECONDS: int = 30
-    REDIS_LOCK_ACQUIRE_TIMEOUT_SECONDS: float = 0.0
+    REDIS_LOCK_ACQUIRE_TIMEOUT_SECONDS: float = 2.0
 
     # PostgreSQL / production pool settings
     DB_POOL_SIZE: int = 5
@@ -86,8 +86,10 @@ class Settings(BaseSettings):
     ANTHROPIC_MODEL: str = "claude-3-opus-20240229"
 
     # Embeddings
+    EMBEDDING_PROVIDER: str = "openai"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMENSION: int = 1536
+    EMBEDDING_TIMEOUT_SECONDS: float = 10.0
 
     # Voice Services
     ELEVEN_LABS_API_KEY: str = ""
@@ -117,13 +119,14 @@ class Settings(BaseSettings):
     VOICE_TELEMETRY_ENABLED: bool = True
 
     # RAG Configuration
-    VECTOR_STORE_PROVIDER: str = "supabase"
+    VECTOR_STORE_PROVIDER: str = "sqlalchemy_json"
     VECTOR_STORE_DIMENSION: int = 1536
     VECTOR_SIMILARITY_THRESHOLD: float = 0.7
     RETRIEVAL_TOP_K: int = 5
     RETRIEVAL_STRATEGY: str = "hybrid"
     RERANKER_TOP_K: int = 3
     RERANKER_THRESHOLD: float = 0.5
+    RAG_DEMO_CORPUS_VERSION: str = "demo-v1"
 
     # Interview Configuration
     DEFAULT_INTERVIEW_DURATION: int = 1800  # 30 minutes

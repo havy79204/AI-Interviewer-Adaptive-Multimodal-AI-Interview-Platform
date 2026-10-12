@@ -32,7 +32,7 @@ class UserStore:
             return {"id": user.id, "email": user.email, "role": user.role, "password_hash": user.password_hash}
 
     @classmethod
-    def ensure_default_admin(cls, email: str = "admin@example.com", password: str = "secret123") -> dict[str, Any]:
+    def ensure_default_admin(cls, email: str, password: str) -> dict[str, Any]:
         user = cls.get_by_email(email)
         if user is not None:
             return user

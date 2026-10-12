@@ -9,17 +9,27 @@ from services.auth_service import issue_token
 from services.user_store import UserStore
 
 
-client = TestClient(app)
+@pytest.fixture
+def client():
+    with TestClient(app) as test_client:
+        yield test_client
 
 
-def test_authenticated_voice_websocket_final_flow_and_duplicate_final():
+def test_authenticated_voice_websocket_final_flow_and_duplicate_final(client: TestClient):
     email = "voice-websocket@example.com"
     UserStore.create(email, "password123", role="candidate")
     token = issue_token(email, "candidate")
+    headers = {"Authorization": f"Bearer {token}"}
+    candidate = client.post(
+        "/api/v1/candidates",
+        json={"name": "Voice Test Candidate", "email": email},
+        headers=headers,
+    )
+    assert candidate.status_code == 200
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": "voice-candidate", "position": "AI Engineer"},
-        headers={"Authorization": f"Bearer {token}"},
+        json={"candidate_id": candidate.json()["id"], "position": "AI Engineer"},
+        headers=headers,
     )
     interview_id = start.json()["interview_id"]
 
@@ -54,7 +64,7 @@ def test_authenticated_voice_websocket_final_flow_and_duplicate_final():
         assert not any(event["type"] == "transcript.final" for event in duplicate_events)
 
 
-def test_unauthenticated_voice_websocket_is_rejected():
+def test_unauthenticated_voice_websocket_is_rejected(client: TestClient):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws/interview/missing/voice"):
             pass

@@ -1,15 +1,24 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
+from services.user_store import UserStore
+
+TEST_ADMIN_EMAIL = "pipeline-test-admin@example.test"
+TEST_ADMIN_PASSWORD = "test-only-pipeline-password"
 
 
-client = TestClient(app)
+@pytest.fixture
+def client():
+    with TestClient(app) as test_client:
+        UserStore.create(TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, role="admin")
+        yield test_client
 
 
-def test_auth_and_candidate_flow():
+def test_auth_and_candidate_flow(client: TestClient):
     login = client.post(
         "/api/v1/auth/login",
-        json={"email": "admin@example.com", "password": "secret123"},
+        json={"email": TEST_ADMIN_EMAIL, "password": TEST_ADMIN_PASSWORD},
     )
     assert login.status_code == 200
     token = login.json()["access_token"]
@@ -27,10 +36,10 @@ def test_auth_and_candidate_flow():
     assert candidate.json()["email"] == "jane@example.com"
 
 
-def test_interview_report_export_flow():
+def test_interview_report_export_flow(client: TestClient):
     login = client.post(
         "/api/v1/auth/login",
-        json={"email": "admin@example.com", "password": "secret123"},
+        json={"email": TEST_ADMIN_EMAIL, "password": TEST_ADMIN_PASSWORD},
     )
     assert login.status_code == 200
     token = login.json()["access_token"]
@@ -55,4 +64,6 @@ def test_interview_report_export_flow():
     assert report.status_code == 200
     payload = report.json()
     assert payload["interview_id"] == interview_id
-    assert "report_path" in payload
+    assert payload["report_file"].endswith(".json")
+    assert payload["report"]["evaluation_status"] == "complete"
+    assert "recruiter's independent hiring decision" in payload["report"]["decision_disclaimer"]

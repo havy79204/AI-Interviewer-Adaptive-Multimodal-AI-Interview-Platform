@@ -1,12 +1,16 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
 
 
-client = TestClient(app)
+@pytest.fixture
+def client():
+    with TestClient(app) as test_client:
+        yield test_client
 
 
-def test_db_backed_auth_and_candidate_store():
+def test_db_backed_auth_and_candidate_store(client: TestClient):
     register = client.post(
         "/api/v1/auth/register",
         json={"email": "admin-db@example.com", "password": "secret123", "role": "admin"},
@@ -22,7 +26,12 @@ def test_db_backed_auth_and_candidate_store():
 
     create_candidate = client.post(
         "/api/v1/candidates",
-        json={"name": "Alice Candidate", "email": "alice@example.com", "phone": "0900", "resume_url": "https://example.com/a.pdf"},
+        json={
+            "name": "Alice Candidate",
+            "email": "admin-db@example.com",
+            "phone": "0900",
+            "resume_url": "https://example.com/a.pdf",
+        },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert create_candidate.status_code == 200
@@ -30,4 +39,4 @@ def test_db_backed_auth_and_candidate_store():
 
     fetch = client.get(f"/api/v1/candidates/{candidate_id}", headers={"Authorization": f"Bearer {token}"})
     assert fetch.status_code == 200
-    assert fetch.json()["email"] == "alice@example.com"
+    assert fetch.json()["email"] == "admin-db@example.com"

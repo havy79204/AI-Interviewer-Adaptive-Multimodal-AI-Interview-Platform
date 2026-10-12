@@ -1,62 +1,137 @@
-"""Run the synthetic golden retrieval benchmark and write JSON results."""
+"""Measure retrieval quality against the version-controlled synthetic evaluation set."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from time import perf_counter
+from typing import Any
 
-from rag.dataset import DATASET_VERSION, GOLDEN_CASES, GOLDEN_DOCUMENTS
+from rag.corpus_loader import DEMO_CORPUS_PATH, load_demo_corpus
 from rag.evaluation import evaluate_ranking
-from rag.service import BM25Retriever, DenseRetriever, DeterministicReranker, HybridRetriever, RetrievalResult
+from rag.service import (
+    BM25Retriever,
+    DenseRetriever,
+    DeterministicReranker,
+    HybridRetriever,
+    RetrievalFilters,
+    configured_embedding_provider,
+)
+
+EVALUATION_PATH = DEMO_CORPUS_PATH.with_name("retrieval_eval_v1.json")
 
 
-class NoOpReranker:
-    name = "none"
+def _filters(payload: dict[str, str]) -> RetrievalFilters:
+    return RetrievalFilters(
+        competency=payload.get("competency"),
+        job_id=payload.get("job_id"),
+        difficulty=payload.get("difficulty"),
+        source_type=payload.get("document_type"),
+    )
 
-    def rerank(self, query, candidates, top_k):
-        return sorted(candidates, key=lambda item: item.score, reverse=True)[:top_k]
+
+def _rank_documents(chunks: list[Any]) -> list[str]:
+    ranked: list[str] = []
+    for item in chunks:
+        document_id = item.chunk.document_id
+        if document_id not in ranked:
+            ranked.append(document_id)
+    return ranked
 
 
-def _retrieve(strategy: str, query: str, filters, top_k: int) -> RetrievalResult:
-    if strategy == "bm25":
+def run() -> dict[str, Any]:
+    corpus = load_demo_corpus()
+    dataset = json.loads(EVALUATION_PATH.read_text(encoding="utf-8"))
+    provider = configured_embedding_provider()
+    dense = DenseRetriever(provider)
+    hybrid = HybridRetriever(
+        documents=corpus,
+        dense=dense,
+        reranker=DeterministicReranker(),
+    )
+    cases = []
+    for case in dataset["cases"]:
+        query = case["query"]
+        filters = _filters(case["filters"])
         started = perf_counter()
-        chunks = BM25Retriever().retrieve(query, GOLDEN_DOCUMENTS, filters, top_k)
-        elapsed = (perf_counter() - started) * 1000
-        return RetrievalResult(query, chunks, 0, len(chunks), False, fallback_reason=f"latency_ms={elapsed:.4f}")
-    if strategy == "dense":
-        started = perf_counter()
-        chunks = DenseRetriever().retrieve(query, GOLDEN_DOCUMENTS, filters, top_k)
-        elapsed = (perf_counter() - started) * 1000
-        return RetrievalResult(query, chunks, len(chunks), 0, False, fallback_reason=f"latency_ms={elapsed:.4f}")
-    retriever = HybridRetriever(GOLDEN_DOCUMENTS, reranker=DeterministicReranker() if strategy == "hybrid_reranker" else NoOpReranker())
-    return retriever.retrieve(query, filters, top_k)
+        lexical = BM25Retriever().retrieve(query, corpus, filters, top_k=len(corpus))
+        combined = hybrid.retrieve(query, filters, top_k=len(corpus))
+        elapsed_ms = (perf_counter() - started) * 1000
+        lexical_ids = _rank_documents(lexical)
+        combined_ids = _rank_documents(combined.chunks)
+        relevant_ids = case["relevant_document_ids"]
+        relevance = {document_id: 1.0 for document_id in relevant_ids}
+        cases.append(
+            {
+                "query": query,
+                "filters": case["filters"],
+                "lexical": {
+                    "ranked_document_ids": lexical_ids,
+                    "metrics_at_5": evaluate_ranking(lexical_ids[:5], relevance, 5),
+                },
+                "hybrid": {
+                    "ranked_document_ids": combined_ids,
+                    "metrics_at_5": evaluate_ranking(combined_ids[:5], relevance, 5),
+                    "dense_candidates": combined.dense_count,
+                    "fallback_reason": combined.fallback_reason,
+                },
+                "forbidden_documents_excluded": not (
+                    set(combined_ids) & set(case.get("forbidden_document_ids", []))
+                ),
+                "forbidden_document_ids": case.get("forbidden_document_ids", []),
+                "expected_relevant_documents": relevant_ids,
+                "latency_ms": round(elapsed_ms, 3),
+            }
+        )
 
+    metric_cases = [
+        case
+        for case, source in zip(cases, dataset["cases"], strict=True)
+        if source["relevant_document_ids"]
+    ]
+    semantic_query_count = sum(
+        case["hybrid"]["dense_candidates"] > 0 for case in cases
+    )
+    semantic_retrieval_ran = provider is not None and semantic_query_count > 0
 
-def run(output_path: str = "rag_evaluation_results.json") -> dict:
-    results = {}
-    for strategy in ("bm25", "dense", "hybrid", "hybrid_reranker"):
-        metric_rows = []
-        latencies = []
-        for case in GOLDEN_CASES:
-            started = perf_counter()
-            result = _retrieve(strategy, case["query"], case["filters"], 10)
-            latencies.append((perf_counter() - started) * 1000)
-            ranked_ids = [item.chunk.chunk_id for item in result.chunks]
-            row = {"query": case["query"], "metrics": {str(k): evaluate_ranking(ranked_ids, case["relevance"], k) for k in (1, 3, 5, 10)}}
-            metric_rows.append(row)
-        results[strategy] = {
-            "dataset_version": DATASET_VERSION,
-            "rows": metric_rows,
-            "mean_latency_ms": sum(latencies) / len(latencies),
-            "p50_latency_ms": sorted(latencies)[len(latencies) // 2],
-            "p95_latency_ms": sorted(latencies)[min(len(latencies) - 1, int(len(latencies) * 0.95))],
-            "max_latency_ms": max(latencies),
-        }
-    payload = {"dataset_version": DATASET_VERSION, "strategies": results}
-    Path(output_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return payload
+    def mean(metric: str) -> float:
+        return sum(
+            case["hybrid"]["metrics_at_5"][metric] for case in metric_cases
+        ) / max(len(metric_cases), 1)
+
+    return {
+        "dataset_version": dataset["dataset_version"],
+        "corpus_version": json.loads(DEMO_CORPUS_PATH.read_text(encoding="utf-8"))["version"],
+        "embedding_provider": provider.__class__.__name__ if provider is not None else None,
+        "embedding_model": provider.model if provider is not None else None,
+        "semantic_embeddings_enabled": semantic_retrieval_ran,
+        "semantic_query_count": semantic_query_count,
+        "lexical_fallback_case_count": sum(
+            case["hybrid"]["dense_candidates"] == 0 for case in cases
+        ),
+        "quality_claim": (
+            "semantic hybrid retrieval measured; compare against the lexical baseline"
+            if semantic_retrieval_ran
+            else "embedding provider is not configured; lexical-only metrics measured"
+            if provider is None
+            else "embedding provider is configured but dense retrieval did not run; lexical-only metrics measured"
+        ),
+        "hybrid_mean_recall_at_5": mean("recall"),
+        "hybrid_mean_mrr_at_5": mean("mrr"),
+        "lexical_mean_recall_at_5": sum(
+            case["lexical"]["metrics_at_5"]["recall"] for case in metric_cases
+        ) / max(len(metric_cases), 1),
+        "lexical_mean_mrr_at_5": sum(
+            case["lexical"]["metrics_at_5"]["mrr"] for case in metric_cases
+        ) / max(len(metric_cases), 1),
+        "forbidden_scope_cases_passed": sum(
+            case["forbidden_documents_excluded"]
+            for case in cases
+            if case["forbidden_document_ids"]
+        ),
+        "forbidden_scope_cases_total": sum(bool(case["forbidden_document_ids"]) for case in cases),
+        "cases": cases,
+    }
 
 
 if __name__ == "__main__":
-    run()
+    print(json.dumps(run(), indent=2))
