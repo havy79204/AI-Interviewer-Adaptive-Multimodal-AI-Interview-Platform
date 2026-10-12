@@ -3,23 +3,37 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
 from agents.interview_agent.graph import InterviewAgentCore
-from evaluation.service import EvaluationService, Rubric
-from rag.service import RAGQuestionService
-from services.database import SessionLocal
-from services.repositories import EvaluationRepository, InterviewRepository, QuestionRepository, TurnRepository
-from services.turn_state import TurnStatus
 from config import settings
-from integrations.llm_providers.provider import provider_from_settings
-from infrastructure.distributed_lock import DistributedLock, RedisUnavailableError
+from evaluation.service import (
+    DeterministicEvaluator,
+    EvaluationContext,
+    EvaluationService,
+    LLMEvaluator,
+    Rubric,
+)
+from infrastructure.distributed_lock import (
+    DistributedLock,
+    LockAcquisitionTimeout,
+    RedisUnavailableError,
+)
 from infrastructure.redis_store import RedisClient, RedisStore
+from integrations.llm_providers.provider import LLMProviderError, provider_from_settings
+from rag.service import RAGQuestionService
+from services.database import AccessAuditRecord, SessionLocal
+from services.repositories import (
+    EvaluationRepository,
+    InterviewRepository,
+    QuestionRepository,
+    TurnRepository,
+)
+from services.turn_state import TurnStatus
 
 
 class InterviewNotFoundError(LookupError):
@@ -28,6 +42,22 @@ class InterviewNotFoundError(LookupError):
 
 class InterviewForbiddenError(PermissionError):
     """Raised when a user is authenticated but cannot perform an operation."""
+
+
+class InterviewConflictError(RuntimeError):
+    """Raised when a turn ID is reused with a different answer payload."""
+
+
+class InterviewProcessingError(RuntimeError):
+    """Raised when another request is still processing this interview."""
+
+
+class InterviewUnavailableError(RuntimeError):
+    """Raised when safe distributed processing cannot be guaranteed."""
+
+
+class InterviewEvaluationError(RuntimeError):
+    """Raised when an answer cannot be evaluated and should be retried."""
 
 
 class InterviewService:
@@ -44,11 +74,17 @@ class InterviewService:
         redis_client: Any | None = None,
     ) -> None:
         self.rag = rag or RAGQuestionService()
+        llm_provider = provider_from_settings(settings)
         self.agent = agent or InterviewAgentCore(
-            llm_provider=provider_from_settings(settings),
+            llm_provider=llm_provider,
             context_retriever=self._retrieve_graph_context,
         )
-        self.evaluator = evaluator or EvaluationService()
+        if evaluator is not None:
+            self.evaluator = evaluator
+        elif llm_provider is not None:
+            self.evaluator = EvaluationService(LLMEvaluator(llm_provider))
+        else:
+            self.evaluator = EvaluationService(DeterministicEvaluator())
         self.interviews = interview_repository or InterviewRepository()
         self.turns = turn_repository or TurnRepository()
         self.evaluations = evaluation_repository or EvaluationRepository()
@@ -76,72 +112,160 @@ class InterviewService:
         lock.release()
 
     def start_interview(
-        self, candidate_id: str, position: str, mode: str = "text", owner_user_id: str | None = None
+        self,
+        candidate_id: str,
+        position: str,
+        mode: str = "text",
+        owner_user_id: str | None = None,
+        owner_role: str = "candidate",
     ) -> dict[str, Any]:
+        with SessionLocal() as session:
+            if not self.interviews.can_manage_candidate(
+                session, candidate_id, owner_user_id or "", owner_role
+            ):
+                raise InterviewNotFoundError(candidate_id)
         state = self.agent.start_interview(candidate_id=candidate_id, position=position)
         interview_id = str(uuid4())
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         state.update({"interview_id": interview_id, "mode": mode, "created_at": now, "updated_at": now})
         with SessionLocal.begin() as session:
+            if not self.interviews.can_manage_candidate(
+                session, candidate_id, owner_user_id or "", owner_role
+            ):
+                raise InterviewNotFoundError(candidate_id)
             self.interviews.create(session, state, owner_user_id)
+            if owner_role == "admin" and owner_user_id is not None:
+                self._audit_admin(session, owner_user_id, "create", interview_id)
         return state
 
     def get_interview(self, interview_id: str, user_id: str | None = None, role: str = "candidate") -> dict[str, Any] | None:
-        with SessionLocal() as session:
+        with SessionLocal.begin() as session:
             interview = self.interviews.get_authorized(session, interview_id, user_id or "", role)
-            return None if interview is None else self._state(interview)
+            if interview is None:
+                return None
+            if role == "admin" and user_id is not None:
+                self._audit_admin(session, user_id, "read", interview_id)
+            return self._state(interview)
 
     def list_interviews(self, user_id: str | None = None, role: str = "candidate") -> list[dict[str, Any]]:
-        with SessionLocal() as session:
-            return [self._state(interview) for interview in self.interviews.list_authorized(session, user_id or "", role)]
+        with SessionLocal.begin() as session:
+            interviews = self.interviews.list_authorized(session, user_id or "", role)
+            if role == "admin" and user_id is not None:
+                self._audit_admin(session, user_id, "list", "collection")
+            return [self._state(interview) for interview in interviews]
 
     def submit_answer(
         self, interview_id: str, answer: str, turn_id: str, user_id: str | None = None, role: str = "candidate"
     ) -> dict[str, Any]:
         if role == "recruiter":
             raise InterviewForbiddenError("Recruiters have read-only interview access")
+        lock = self._acquire_submission_lock(interview_id, answer, turn_id, user_id, role)
+        try:
+            replay = self._prepare_turn(interview_id, answer, turn_id, user_id, role)
+            if replay is not None:
+                return replay
+            return self._process_turn(interview_id, answer, turn_id, user_id, role)
+        finally:
+            self._release_processing_lock(interview_id, lock)
+
+    def _acquire_submission_lock(
+        self,
+        interview_id: str,
+        answer: str,
+        turn_id: str,
+        user_id: str | None,
+        role: str,
+    ) -> DistributedLock:
+        with SessionLocal() as session:
+            if self.interviews.get_authorized(session, interview_id, user_id or "", role) is None:
+                raise InterviewNotFoundError(interview_id)
         try:
             lock = self._get_processing_lock(interview_id)
+        except LockAcquisitionTimeout as exc:
+            with SessionLocal() as session:
+                existing_turn = self.turns.get_by_client_id(session, interview_id, turn_id)
+                if existing_turn is not None and existing_turn.candidate_answer != answer:
+                    raise InterviewConflictError(
+                        "turn_id was already used with a different answer"
+                    ) from exc
+            raise InterviewProcessingError(
+                "Interview is still processing; retry the same turn_id and answer."
+            ) from exc
         except RedisUnavailableError as exc:
-            raise InterviewForbiddenError("Cannot safely process distributed interview operation") from exc
+            raise InterviewUnavailableError(
+                "Cannot safely process interview while distributed locking is unavailable"
+            ) from exc
         if lock is None:
-            raise InterviewForbiddenError("Interview is already being processed by another operation")
+            raise InterviewUnavailableError(
+                "Cannot safely process interview without distributed locking"
+            )
+        return lock
+
+    def _prepare_turn(
+        self,
+        interview_id: str,
+        answer: str,
+        turn_id: str,
+        user_id: str | None,
+        role: str,
+    ) -> dict[str, Any] | None:
         try:
             with SessionLocal.begin() as session:
                 interview = self.interviews.get_authorized(session, interview_id, user_id or "", role)
                 if interview is None:
                     raise InterviewNotFoundError(interview_id)
+                if role == "admin" and user_id is not None:
+                    self._audit_admin(session, user_id, "answer", interview_id)
                 existing_turn = self.turns.get_by_client_id(session, interview_id, turn_id)
                 if existing_turn is not None:
-                    if existing_turn.status == TurnStatus.FAILED_RETRYABLE:
-                        self.turns.transition(existing_turn, TurnStatus.PROCESSING)
-                        turn = existing_turn
-                    elif self.turns.reclaim_if_stale(existing_turn, settings.TURN_PROCESSING_LEASE_SECONDS):
-                        turn = existing_turn
-                    else:
-                        state = self._state(interview)
-                        self._release_processing_lock(interview_id, lock)
-                        lock = None
-                        return state
+                    if not self._claim_existing_turn(existing_turn, answer):
+                        return self._state(interview)
                 else:
-                    turn = self.turns.create_processing(session, interview_id, turn_id, answer)
-        except InterviewNotFoundError:
-            self._release_processing_lock(interview_id, lock)
-            lock = None
-            raise
-
-        except IntegrityError:
+                    state = self._state(interview)
+                    if state.get("status") == "completed":
+                        raise InterviewConflictError("Interview has already been completed")
+                    self.turns.create_processing(session, interview_id, turn_id, answer)
+        except IntegrityError as exc:
             with SessionLocal() as session:
                 interview = self.interviews.get_authorized(session, interview_id, user_id or "", role)
                 if interview is None:
-                    self._release_processing_lock(interview_id, lock)
-                    lock = None
-                    raise InterviewNotFoundError(interview_id)
-                state = self._state(interview)
-                self._release_processing_lock(interview_id, lock)
-                lock = None
-                return state
+                    raise InterviewNotFoundError(interview_id) from exc
+                existing_turn = self.turns.get_by_client_id(session, interview_id, turn_id)
+                if existing_turn is not None and existing_turn.candidate_answer != answer:
+                    raise InterviewConflictError(
+                        "turn_id was already used with a different answer"
+                    ) from exc
+                return self._state(interview)
+        return None
 
+    def _claim_existing_turn(self, turn: Any, answer: str) -> bool:
+        if turn.candidate_answer != answer:
+            raise InterviewConflictError("turn_id was already used with a different answer")
+        if turn.status == TurnStatus.FAILED_RETRYABLE:
+            self.turns.transition(turn, TurnStatus.PROCESSING)
+            return True
+        if self.turns.reclaim_if_stale(turn, settings.TURN_PROCESSING_LEASE_SECONDS):
+            return True
+        if turn.status == TurnStatus.PROCESSING:
+            raise InterviewProcessingError(
+                "Interview is still processing; retry the same turn_id and answer."
+            )
+        if turn.status == TurnStatus.COMPLETED:
+            return False
+        if turn.status == TurnStatus.RECEIVED:
+            raise InterviewProcessingError(
+                "Interview is still processing; retry the same turn_id and answer."
+            )
+        raise InterviewConflictError("turn has failed permanently and cannot be replayed")
+
+    def _process_turn(
+        self,
+        interview_id: str,
+        answer: str,
+        turn_id: str,
+        user_id: str | None,
+        role: str,
+    ) -> dict[str, Any]:
         try:
             with SessionLocal.begin() as session:
                 interview = self.interviews.get_authorized(session, interview_id, user_id or "", role)
@@ -155,30 +279,66 @@ class InterviewService:
                     if persisted_turn.status == TurnStatus.PROCESSING:
                         self.turns.transition(persisted_turn, TurnStatus.COMPLETED)
                     return state
-                updated_state = self.agent.handle_answer(state, answer, turn_id)
+                asked_questions = self.questions.list_for_interview(session, interview_id)
+                asked_question = asked_questions[-1] if asked_questions else None
+                question_text = (
+                    asked_question.question_text
+                    if asked_question is not None
+                    else state.get("current_question", "")
+                )
+                target_competency = (
+                    (asked_question.competency if asked_question is not None else None)
+                    or state.get("current_competency")
+                    or "general"
+                )
+                rubric = Rubric(competency=target_competency)
+                evaluation_context = EvaluationContext(
+                    position=str(state.get("position", "")),
+                    prior_answers=[
+                        str(item.get("answer", ""))
+                        for item in state.get("history", [])[-5:]
+                        if item.get("answer")
+                    ],
+                    competency_state=state.get("skills", {}),
+                    identified_gaps=state.get("identified_gaps", []),
+                )
+                try:
+                    result = self.evaluator.evaluate_result(
+                        question_text,
+                        answer,
+                        target_competency,
+                        rubric,
+                        evaluation_context,
+                    )
+                except LLMProviderError as exc:
+                    raise InterviewEvaluationError(
+                        "Answer evaluation is unavailable; retry this turn."
+                    ) from exc
+                persisted_turn.question_id = asked_question.id if asked_question is not None else None
+                graph_state = dict(state)
+                graph_state["questions_asked"] = [item.question_text for item in asked_questions]
+                updated_state = self.agent.handle_answer(
+                    graph_state,
+                    answer,
+                    turn_id,
+                    evaluation=result,
+                    rubric=rubric,
+                    asked_questions=graph_state["questions_asked"],
+                )
                 updated_state["follow_up_questions"] = self.rag.retrieve_relevant_questions(
                     updated_state.get("position", ""), updated_state.get("skills", {})
                 )
-                evaluation = self.evaluator.evaluate_answer(
-                    answer, updated_state.get("skills", {}), updated_state.get("position", "")
+                evaluation = self.evaluator.summarize(
+                    result,
+                    updated_state.get("position", ""),
+                    updated_state.get("skills", {}),
                 )
-                competencies = list(updated_state.get("skills", {})) or ["general"]
-                questions = self.questions.list_for_interview(session, interview_id)
-                question_id = questions[-1].id if questions else None
-                for competency in competencies:
-                    result = self.evaluator.evaluator.evaluate(
-                        state.get("current_question", ""),
-                        answer,
-                        competency,
-                        Rubric(competency=competency),
-                    )
-                    self.evaluations.save_result(session, interview_id, persisted_turn, question_id, result)
+                question_id = asked_question.id if asked_question is not None else None
+                self.evaluations.save_result(session, interview_id, persisted_turn, question_id, result)
                 updated_state["evaluation"] = evaluation
                 updated_state["overall_score"] = evaluation["overall_score"]
-                updated_state["current_question"] = self.rag.generate_follow_up_question(
-                    updated_state.get("position", ""), answer, updated_state.get("skills", {})
-                )
-                updated_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+                updated_state["recommended_next_action"] = updated_state["next_action"]
+                updated_state["updated_at"] = datetime.now(UTC).isoformat()
                 self.interviews.save_state(session, interview, updated_state, persisted_turn)
                 return updated_state
         except Exception:
@@ -187,15 +347,21 @@ class InterviewService:
                 if failed_turn is not None and failed_turn.status == TurnStatus.PROCESSING:
                     self.turns.transition(failed_turn, TurnStatus.FAILED_RETRYABLE)
             raise
-        finally:
-            self._release_processing_lock(interview_id, lock)
 
     def _retrieve_graph_context(self, state: dict[str, Any]) -> str:
         result = self.rag.retrieve_context(
             str(state.get("position", "")),
             state.get("current_competency"),
             state.get("identified_gaps", []),
+            question=state.get("current_question"),
+            answer_evidence=[str(state.get("candidate_answer", ""))],
+            previous_questions=state.get("asked_questions", []),
+            difficulty=state.get("difficulty"),
+            job_id=state.get("job_id") or state.get("interview_template_id"),
+            organization_id=state.get("organization_id"),
         )
+        if result.fallback_reason and result.fallback_reason.startswith("retrieval_failed:"):
+            raise RuntimeError("Interview question context retrieval failed")
         return self.rag.format_context(result)
 
     @staticmethod
@@ -209,3 +375,12 @@ class InterviewService:
             "current_question": interview.current_question,
         })
         return state
+
+    @staticmethod
+    def _audit_admin(session, user_id: str, action: str, resource_id: str) -> None:
+        session.add(AccessAuditRecord(
+            actor_user_id=user_id,
+            action=action,
+            resource_type="interview",
+            resource_id=resource_id,
+        ))

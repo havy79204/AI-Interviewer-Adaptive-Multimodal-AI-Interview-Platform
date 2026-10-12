@@ -210,7 +210,12 @@ class TestProviderErrorNormalization:
             interview_service.submit_answer.return_value = {"current_question": "What is 2+2?"}
 
             mock_tts = AsyncMock()
-            mock_tts.stream = AsyncMock(side_effect=TTSProviderError("TTS_ERROR", "API error"))
+
+            async def failed_tts_stream(_text):
+                raise TTSProviderError("TTS_ERROR", "API error")
+                yield b""
+
+            mock_tts.stream = failed_tts_stream
             mock_tts.close = AsyncMock()
 
             mock_stt = AsyncMock()

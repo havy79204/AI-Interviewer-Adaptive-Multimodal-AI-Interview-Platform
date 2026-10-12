@@ -1,62 +1,250 @@
-"""Report generation and export for candidate interview outcomes."""
+"""Persisted interview outcome reports."""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+from sqlalchemy import select
 
 from config import settings
+from services.database import (
+    InterviewAssessmentRecord,
+    InterviewEvidenceRecord,
+    InterviewRecord,
+    InterviewTurnRecord,
+    SessionLocal,
+)
 
 
 class ReportService:
-    """Generate a simple JSON or text report from interview evaluation results."""
+    """Build recruiter reports from durable interview and assessment records."""
 
-    def __init__(self, output_dir: str | None = None) -> None:
+    def __init__(self, output_dir: str | None = None, session_factory: Any | None = None) -> None:
         self.output_dir = Path(output_dir or settings.STORAGE_PATH)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._session_factory = session_factory or SessionLocal
 
-    def build_report(self, candidate_id: str, interview_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        evaluation = state.get("evaluation", {})
-        overall_score = float(state.get("overall_score", evaluation.get("overall_score", 0.0)))
-        skills = state.get("skills", {})
+    def build_report(
+        self, candidate_id: str, interview_id: str, state: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        del state
+        with self._session_factory() as session:
+            interview = session.get(InterviewRecord, interview_id)
+            if interview is None or interview.candidate_id != candidate_id:
+                raise LookupError("Persisted interview not found")
 
-        report = {
-            "candidate_id": candidate_id,
-            "interview_id": interview_id,
-            "position": state.get("position", ""),
-            "overall_score": round(overall_score, 2),
-            "skills": {name: {"score": values.get("score", 0), "evidence": values.get("evidence", [])} for name, values in skills.items()},
-            "strengths": evaluation.get("strengths", []),
-            "weaknesses": evaluation.get("weaknesses", []),
-            "feedback": evaluation.get("feedback", ""),
-            "confidence": evaluation.get("confidence", 0.0),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            persisted_state = json.loads(interview.state_json)
+            turns = list(
+                session.execute(
+                    select(InterviewTurnRecord)
+                    .where(InterviewTurnRecord.interview_id == interview_id)
+                    .order_by(InterviewTurnRecord.sequence_number)
+                ).scalars()
+            )
+            assessments = list(
+                session.execute(
+                    select(InterviewAssessmentRecord)
+                    .where(InterviewAssessmentRecord.interview_id == interview_id)
+                    .order_by(InterviewAssessmentRecord.created_at)
+                ).scalars()
+            )
+            evidence = list(
+                session.execute(
+                    select(InterviewEvidenceRecord)
+                    .where(InterviewEvidenceRecord.interview_id == interview_id)
+                    .order_by(InterviewEvidenceRecord.created_at)
+                ).scalars()
+            )
+
+        competency_reports: dict[str, dict[str, Any]] = {}
+        for assessment in assessments:
+            competency = competency_reports.setdefault(
+                assessment.competency,
+                {
+                    "scores": [],
+                    "confidence_values": [],
+                    "statuses": [],
+                    "strengths": [],
+                    "gaps": [],
+                    "evidence": [],
+                },
+            )
+            if assessment.status != "not_assessed":
+                competency["scores"].append(assessment.score)
+            competency["confidence_values"].append(assessment.confidence)
+            competency["statuses"].append(assessment.status)
+            competency["strengths"].extend(json.loads(assessment.strengths_json))
+            competency["gaps"].extend(json.loads(assessment.gaps_json))
+
+        for item in evidence:
+            competency = competency_reports.setdefault(
+                item.competency,
+                {
+                    "scores": [],
+                    "confidence_values": [],
+                    "statuses": [],
+                    "strengths": [],
+                    "gaps": [],
+                    "evidence": [],
+                },
+            )
+            competency["evidence"].append(
+                {
+                    "quote": item.evidence_text,
+                    "type": item.evidence_type,
+                    "strength": item.strength,
+                    "specificity": item.specificity,
+                    "ownership": item.ownership,
+                    "relevance": item.relevance,
+                    "evaluator": item.evaluator_type,
+                }
+            )
+
+        scores = [score for item in competency_reports.values() for score in item["scores"]]
+        confidences = [
+            value
+            for item in competency_reports.values()
+            for value in item["confidence_values"]
+        ]
+        strengths = _unique(
+            value for item in competency_reports.values() for value in item["strengths"]
+        )
+        gaps = _unique(value for item in competency_reports.values() for value in item["gaps"])
+        latest_evaluation = persisted_state.get("evaluation", {})
+        missing_evidence = _unique(latest_evaluation.get("missing_evidence", []))
+        for values in competency_reports.values():
+            values["score"] = (
+                round(sum(values["scores"]) / len(values["scores"]), 2)
+                if values["scores"]
+                else None
+            )
+            values["confidence"] = (
+                round(sum(values["confidence_values"]) / len(values["confidence_values"]), 3)
+                if values["confidence_values"]
+                else None
+            )
+            for field in ("scores", "confidence_values", "statuses"):
+                values.pop(field)
+
+        failed_turns = sum(turn.status == "failed_retryable" for turn in turns)
+        pending_turns = sum(turn.status != "completed" for turn in turns)
+        is_final = persisted_state.get("status") == "completed" and pending_turns == 0
+        evaluation_status = (
+            "unavailable"
+            if failed_turns and not assessments
+            else "partial"
+            if pending_turns or len(assessments) < len(turns)
+            else "complete"
+            if assessments
+            else "not_started"
+        )
+        summary = (
+            f"{len(assessments)} persisted assessment(s) across "
+            f"{len(competency_reports)} competency/competencies."
+            if assessments
+            else "No completed assessment is available."
+        )
+        assessment_payload = latest_evaluation.get("assessment", {})
+        recommendation_text = latest_evaluation.get("feedback") or assessment_payload.get(
+            "rationale"
+        )
+        recommendation = {
+            "text": recommendation_text,
+            "next_action": latest_evaluation.get("next_action")
+            or assessment_payload.get("next_action"),
+            "evaluator": latest_evaluation.get("evaluator_type"),
         }
-        return report
+        areas_for_assessment = _unique([*gaps, *missing_evidence])
+        for name, values in competency_reports.items():
+            if values["confidence"] is not None and values["confidence"] < 0.6:
+                areas_for_assessment.append(
+                    f"Gather additional evidence for {name}; assessment confidence is limited."
+                )
 
-    def export_report(self, candidate_id: str, interview_id: str, state: dict[str, Any], format: str = "json") -> str:
+        return {
+            "candidate_id": interview.candidate_id,
+            "interview_id": interview.id,
+            "position": interview.position,
+            "completion_status": persisted_state.get("status", "unknown"),
+            "is_final": is_final,
+            "evaluation_status": evaluation_status,
+            "summary": summary,
+            "overall_score": round(sum(scores) / len(scores) * 20.0, 2) if scores else None,
+            "competencies": competency_reports,
+            "supporting_evidence": [
+                {
+                    "competency": item.competency,
+                    "quote": item.evidence_text,
+                    "type": item.evidence_type,
+                    "strength": item.strength,
+                    "specificity": item.specificity,
+                    "ownership": item.ownership,
+                    "relevance": item.relevance,
+                }
+                for item in evidence
+            ],
+            "strengths": strengths,
+            "gaps": gaps,
+            "missing_evidence": missing_evidence,
+            "confidence": round(sum(confidences) / len(confidences), 3)
+            if confidences
+            else None,
+            "areas_requiring_further_assessment": _unique(areas_for_assessment),
+            "ai_recommendation": recommendation,
+            "failed_turn_count": failed_turns,
+            "pending_turn_count": pending_turns,
+            "decision_disclaimer": (
+                "This AI assessment supports, but does not replace, the recruiter's "
+                "independent hiring decision."
+            ),
+            "generated_at": datetime.now(UTC).isoformat(),
+        }
+
+    def export_report(
+        self, candidate_id: str, interview_id: str, state: dict[str, Any], format: str = "json"
+    ) -> str:
+        if format not in {"json", "txt"}:
+            raise ValueError("Report format must be 'json' or 'txt'")
         report = self.build_report(candidate_id, interview_id, state)
-        file_name = f"report_{candidate_id}_{interview_id}.{format}"
-        output_path = self.output_dir / file_name
+        output_path = self.output_dir / f"report_{uuid4()}.{format}"
         if format == "json":
             output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         else:
-            text = "\n".join(
-                [
-                    f"Candidate: {report['candidate_id']}",
-                    f"Interview: {report['interview_id']}",
-                    f"Position: {report['position']}",
-                    f"Overall score: {report['overall_score']}",
-                    f"Confidence: {report['confidence']}",
-                    "\nStrengths:",
-                    *[f"- {item}" for item in report["strengths"]],
-                    "\nWeaknesses:",
-                    *[f"- {item}" for item in report["weaknesses"]],
-                    "\nFeedback:",
-                    report["feedback"],
-                ]
-            )
-            output_path.write_text(text, encoding="utf-8")
+            output_path.write_text(_format_text_report(report), encoding="utf-8")
         return str(output_path)
+
+
+def _unique(values: Any) -> list[str]:
+    return list(dict.fromkeys(str(value) for value in values if value))
+
+
+def _format_text_report(report: dict[str, Any]) -> str:
+    lines = [
+        f"Interview: {report['interview_id']}",
+        f"Position: {report['position']}",
+        f"Status: {report['completion_status']} ({report['evaluation_status']})",
+        f"Overall score: {report['overall_score']}",
+        f"Confidence: {report['confidence']}",
+        "",
+        "Summary:",
+        report["summary"],
+        "",
+        "Strengths:",
+        *[f"- {item}" for item in report["strengths"]],
+        "",
+        "Gaps:",
+        *[f"- {item}" for item in report["gaps"]],
+        "",
+        "Areas requiring further assessment:",
+        *[f"- {item}" for item in report["areas_requiring_further_assessment"]],
+        "",
+        "AI recommendation:",
+        report["ai_recommendation"]["text"] or "No persisted AI recommendation is available.",
+        "",
+        report["decision_disclaimer"],
+    ]
+    return "\n".join(lines)

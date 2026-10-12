@@ -16,7 +16,7 @@ from services.user_store import UserStore
 security = HTTPBearer(auto_error=False)
 
 
-def register_user(email: str, password: str, role: str = "admin") -> dict[str, Any]:
+def register_user(email: str, password: str, role: str = "candidate") -> dict[str, Any]:
     return UserStore.create(email=email, password=password, role="candidate")
 
 
@@ -27,7 +27,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
     return user
 
 
-def issue_token(email: str, role: str = "admin") -> str:
+def issue_token(email: str, role: str = "candidate") -> str:
     payload = {
         "sub": email,
         "role": role,

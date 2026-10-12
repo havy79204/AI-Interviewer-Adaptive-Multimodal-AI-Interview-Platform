@@ -1,33 +1,228 @@
-name: Tests & Quality Checks
+name: Backend CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      run_live_ai:
+        description: Run provider-backed smoke and E2E checks
+        type: boolean
+        required: true
+        default: false
+      confirm_live_ai_spend_cap:
+        description: Confirm provider-side spend cap is at most USD $5
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  quality:
+    name: Ruff, whitespace, timeout contracts
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.11', '3.12']
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Ruff
+        run: python -m pip install ruff==0.1.8
+      - name: Focused Ruff lint
+        run: >-
+          ruff check
+          tests/unit/test_api_readiness.py
+          tests/unit/test_security_defaults.py
+          tests/unit/test_live_provider_smoke.py
+          tests/integration/test_phase115c_application_concurrency.py
+          tests/integration/test_live_interview_e2e.py
+      - name: Install timeout contract test dependencies
+        run: python -m pip install pytest==7.4.3 pytest-timeout==2.3.1
+      - name: Verify CI shell propagates failures
+        run: |
+          set +e
+          bash --noprofile --norc -e -o pipefail -c 'exit 23'
+          status=$?
+          set -e
+          if [[ "$status" -ne 23 ]]; then
+            echo "Expected exit code 23, received $status"
+            exit 1
+          fi
+          echo "Nonzero shell status propagated as expected."
+      - name: Verify test timeout and child cleanup
+        run: |
+          python - <<'PY'
+          import os
+          import signal
+          import subprocess
+          import sys
+          import tempfile
+          import time
+          from pathlib import Path
 
-    services:
-      postgres:
-        image: pgvector/pgvector:pg15-latest
+          test_source = '''
+          import os
+          import subprocess
+          import sys
+          import time
+          from pathlib import Path
+          import pytest
+
+          @pytest.fixture
+          def child_process(request):
+              child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+
+              def stop_child():
+                  child.terminate()
+                  try:
+                      child.wait(timeout=3)
+                  except subprocess.TimeoutExpired:
+                      child.kill()
+                      child.wait(timeout=3)
+
+              request.addfinalizer(stop_child)
+              Path(os.environ["TIMEOUT_PROBE_PID_FILE"]).write_text(str(child.pid))
+              return child
+
+          def test_hanging_body_is_bounded(child_process):
+              time.sleep(30)
+          '''
+
+          with tempfile.TemporaryDirectory(prefix="pytest-timeout-contract-") as temp_dir:
+              test_file = Path(temp_dir) / "test_timeout_contract.py"
+              pid_file = Path(temp_dir) / "child.pid"
+              test_file.write_text(test_source, encoding="utf-8")
+              env = os.environ.copy()
+              env["TIMEOUT_PROBE_PID_FILE"] = str(pid_file)
+              command = [
+                  sys.executable, "-m", "pytest", str(test_file), "-q",
+                  "--timeout=1", "--timeout-method=signal",
+              ]
+              probe = subprocess.Popen(
+                  command,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+                  env=env,
+                  start_new_session=True,
+              )
+
+              def terminate_probe_group():
+                  try:
+                      os.killpg(probe.pid, signal.SIGTERM)
+                  except ProcessLookupError:
+                      return
+                  try:
+                      probe.communicate(timeout=3)
+                  except subprocess.TimeoutExpired:
+                      try:
+                          os.killpg(probe.pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+                      probe.communicate(timeout=3)
+
+              try:
+                  stdout, stderr = probe.communicate(timeout=15)
+              except subprocess.TimeoutExpired:
+                  terminate_probe_group()
+                  raise SystemExit("Timeout contract probe exceeded its 15-second deadline.")
+
+              output = stdout + stderr
+              if probe.returncode != 1 or "Timeout >1.0s" not in output:
+                  raise SystemExit(
+                      f"Expected a bounded pytest timeout; exit={probe.returncode}\n{output}"
+                  )
+
+              if pid_file.exists():
+                  child_pid = int(pid_file.read_text(encoding="utf-8"))
+                  try:
+                      os.kill(child_pid, 0)
+                  except ProcessLookupError:
+                      pass
+                  else:
+                      terminate_probe_group()
+                      for _ in range(30):
+                          try:
+                              os.kill(child_pid, 0)
+                          except ProcessLookupError:
+                              break
+                          time.sleep(0.1)
+                      else:
+                          terminate_probe_group()
+                          raise SystemExit(
+                              "Probe-owned child survived process-group termination."
+                          )
+                      raise SystemExit(
+                          "Timed test left its probe-owned child process running; "
+                          "the isolated probe process group was terminated."
+                      )
+              else:
+                  raise SystemExit("Timed test did not create its subprocess marker.")
+              print("Expected timeout failed the test and fixture cleanup reaped its child.")
+          PY
+      - name: Check changed-line whitespace
         env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_pass
-          POSTGRES_DB: test_db
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            git diff --check HEAD^ HEAD
+          else
+            git diff --check "$BASE_SHA" "$GITHUB_SHA"
+          fi
 
+  test-groups:
+    name: "${{ matrix.group }} (Python ${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        include:
+          - group: fast-unit
+            paths: >-
+              tests/unit/test_adaptive_graph.py
+              tests/unit/test_evaluation_domain.py
+              tests/unit/test_interview_core.py
+              tests/unit/test_llm_provider.py
+              tests/unit/test_phase11_infrastructure.py
+              tests/unit/test_security_defaults.py
+              tests/unit/test_turn_state.py
+          - group: api-security-report
+            paths: >-
+              tests/unit/test_api_interview.py
+              tests/unit/test_api_readiness.py
+              tests/unit/test_auth_candidate_db.py
+              tests/unit/test_interview_hardening.py
+              tests/unit/test_production_pipeline.py
+              tests/unit/test_report_service.py
+              tests/unit/test_resource_authorization.py
+              tests/unit/test_semantic_evaluation.py
+          - group: database-concurrency
+            paths: >-
+              tests/unit/test_database_integrity.py
+              tests/integration/test_phase115c_application_concurrency.py
+              tests/isolated/test_distributed_lock_verification.py
+          - group: websocket-voice
+            paths: >-
+              tests/unit/test_voice_phase10.py
+              tests/unit/test_voice_session.py
+              tests/unit/test_voice_websocket.py
+          - group: rag
+            paths: >-
+              tests/unit/test_rag_evaluation.py
+              tests/unit/test_rag_metrics.py
+              tests/unit/test_rag_retrieval.py
+              tests/unit/test_rag_semantic_retrieval.py
+    services:
       redis:
         image: redis:7-alpine
         options: >-
@@ -37,75 +232,107 @@ jobs:
           --health-retries 5
         ports:
           - 6379:6379
-
+    env:
+      DATABASE_URL: sqlite:///./storage/ci_${{ github.run_id }}_${{ matrix.group }}_${{ matrix.python-version }}.db
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: test
+      ENABLE_DEV_ADMIN_BOOTSTRAP: "false"
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Prepare isolated SQLite directory
+        run: mkdir -p storage
+      - name: Refuse migration outside isolated test database
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path, PurePosixPath
+          from sqlalchemy.engine import make_url
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
+          url = make_url(os.environ["DATABASE_URL"])
+          if url.drivername != "sqlite" or not url.database:
+              raise SystemExit("CI migrations require an isolated SQLite DATABASE_URL.")
+          path = PurePosixPath(url.database.replace("\\", "/"))
+          if path.is_absolute() or ".." in path.parts:
+              raise SystemExit("CI test database must be repository-local, not shared.")
+          if len(path.parts) != 2 or path.parts[0] != "storage":
+              raise SystemExit("CI test database must be under the isolated storage directory.")
+          if not path.name.startswith("ci_") or not path.name.endswith(".db"):
+              raise SystemExit("CI test database filename must use the ci_*.db convention.")
+          storage_path = Path.cwd().resolve() / "storage"
+          database_path = storage_path / path.name
+          if storage_path.resolve(strict=False) != storage_path:
+              raise SystemExit("CI test storage directory must not be a symlink.")
+          if database_path.resolve(strict=False) != database_path or database_path.exists():
+              raise SystemExit("CI migrations require a fresh, non-symlink test database file.")
+          if os.environ.get("ENVIRONMENT") != "test":
+              raise SystemExit("CI database migrations require ENVIRONMENT=test.")
+          PY
+      - name: Apply migrations to isolated SQLite database
+        run: |
+          python -m alembic upgrade head
+      - name: Verify migration head
+        if: matrix.group == 'database-concurrency' && matrix.python-version == '3.11'
+        run: |
+          python -m alembic current
+      - name: Run bounded ${{ matrix.group }} tests
+        run: >-
+          python -m pytest ${{ matrix.paths }}
+          -m "not live"
+          --timeout=90
+          --timeout-method=signal
+          -ra
+          --durations=20
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
-
-    - name: Lint with pylint
-      run: |
-        pylint apps agents rag voice evaluation integrations --fail-under=8.0 || true
-
-    - name: Check formatting with black
-      run: |
-        black --check .
-
-    - name: Check import sorting with isort
-      run: |
-        isort --check-only .
-
-    - name: Type check with mypy
-      run: |
-        mypy apps agents --ignore-missing-imports || true
-
-    - name: Security check with bandit
-      run: |
-        bandit -r apps agents -ll || true
-
-    - name: Run unit tests
-      env:
-        DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
-        REDIS_URL: redis://localhost:6379/0
-      run: |
-        pytest tests/unit/ -v --cov=apps --cov=agents --cov=rag --cov-report=xml --cov-report=term
-
-    - name: Run integration tests
-      env:
-        DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
-        REDIS_URL: redis://localhost:6379/0
-      run: |
-        pytest tests/integration/ -v || true
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        files: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
-
-    - name: Build Docker image
-      if: success()
-      run: |
-        docker build -t ai-interviewer:${{ github.sha }} -f docker/Dockerfile.api .
-
-  deploy-staging:
+  live-provider:
+    name: Optional live AI verification
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.run_live_ai == true &&
+      inputs.confirm_live_ai_spend_cap == true
     runs-on: ubuntu-latest
-    needs: test
-    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    timeout-minutes: 20
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LLM_PROVIDER: openai
+      EMBEDDING_PROVIDER: openai
+      RUN_LIVE_AI_TESTS: "1"
+      RUN_LIVE_AI_E2E: "1"
+      ENVIRONMENT: test
+      ENABLE_DEV_ADMIN_BOOTSTRAP: "false"
     steps:
-      - uses: actions/checkout@v3
-      - name: Deploy to staging
-        # Add your staging deployment logic here
-        run: echo "Deploying to staging..."
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Require provider credential without displaying it
+        run: test -n "$OPENAI_API_KEY"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Configure a unique isolated E2E database
+        run: |
+          database_url="sqlite:////${RUNNER_TEMP#/}/live_ai_e2e_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.db"
+          echo "LIVE_AI_E2E_DATABASE_URL=$database_url" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$database_url" >> "$GITHUB_ENV"
+      - name: Run opt-in live provider smoke tests
+        run: >-
+          python -m pytest tests/unit/test_live_provider_smoke.py
+          --timeout=90
+          --timeout-method=signal
+          -ra
+      - name: Run isolated live interview E2E
+        run: >-
+          python -m pytest tests/integration/test_live_interview_e2e.py
+          --timeout=360
+          --timeout-method=signal
+          -ra

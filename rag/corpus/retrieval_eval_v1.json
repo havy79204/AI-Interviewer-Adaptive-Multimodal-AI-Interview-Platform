@@ -1,0 +1,46 @@
+{
+  "dataset_version": "retrieval-eval-v1",
+  "cases": [
+    {
+      "query": "Keep many simultaneous web requests responsive without overwhelming downstream services",
+      "filters": {"competency": "python", "job_id": "ai_engineer"},
+      "relevant_document_ids": ["python-async-io-knowledge", "python-network-question", "python-concurrency-rubric", "python-cancellation-followup"]
+    },
+    {
+      "query": "What does the engineer do when a task is cancelled while waiting on an API?",
+      "filters": {"competency": "python", "job_id": "ai_engineer"},
+      "relevant_document_ids": ["python-cancellation-followup", "python-async-io-knowledge"]
+    },
+    {
+      "query": "A cache returns old values after an update; how should freshness be guaranteed?",
+      "filters": {"competency": "distributed_systems", "job_id": "software_engineer"},
+      "relevant_document_ids": ["distributed-cache-knowledge", "distributed-cache-rubric", "cache-failure-followup"]
+    },
+    {
+      "query": "Describe a cache outage and service recovery",
+      "filters": {"competency": "distributed_systems", "job_id": "software_engineer", "difficulty": "hard"},
+      "relevant_document_ids": ["cache-failure-followup"]
+    },
+    {
+      "query": "Prevent a request retry from applying a database write twice",
+      "filters": {"competency": "databases", "job_id": "software_engineer"},
+      "relevant_document_ids": ["database-idempotency-followup", "database-transaction-rubric", "database-transaction-question"]
+    },
+    {
+      "query": "Concurrent transactions observe unexpected changes; explain isolation and retry strategy",
+      "filters": {"competency": "databases", "job_id": "software_engineer", "difficulty": "hard"},
+      "relevant_document_ids": ["database-isolation-knowledge", "database-transaction-rubric", "database-idempotency-followup"]
+    },
+    {
+      "query": "The model's predictions get worse as incoming data changes; how do you detect and respond?",
+      "filters": {"competency": "machine_learning", "job_id": "ai_engineer"},
+      "relevant_document_ids": ["mlops-monitoring-knowledge", "mlops-deployment-rubric", "mlops-monitoring-question"]
+    },
+    {
+      "query": "Python event-loop backpressure and network I/O",
+      "filters": {"competency": "python", "job_id": "software_engineer"},
+      "relevant_document_ids": [],
+      "forbidden_document_ids": ["python-async-io-knowledge", "python-network-question"]
+    }
+  ]
+}

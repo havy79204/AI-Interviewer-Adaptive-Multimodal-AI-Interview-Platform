@@ -14,20 +14,26 @@ import pytest
 from sqlalchemy import func, select
 
 from config import settings
-from infrastructure.distributed_lock import RedisUnavailableError
 from services.auth_service import issue_token
+from services.candidate_store import CandidateStore
 from services.database import (
     Base,
     InterviewAssessmentRecord,
     InterviewCompetencyStateRecord,
     InterviewEvidenceRecord,
+    InterviewQuestionRecord,
     InterviewTurnRecord,
     SessionLocal,
     engine,
 )
-from services.interview_service import InterviewForbiddenError, InterviewService
+from services.interview_service import (
+    InterviewConflictError,
+    InterviewForbiddenError,
+    InterviewProcessingError,
+    InterviewService,
+    InterviewUnavailableError,
+)
 from services.user_store import UserStore
-
 
 pytestmark = pytest.mark.integration
 
@@ -42,6 +48,17 @@ def _database_url() -> str:
 
 def _prepare_database() -> None:
     Base.metadata.create_all(bind=engine)
+
+
+def _stop_api_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def _service_worker(interview_id: str, turn_id: str, user_id: str, result_queue) -> None:
@@ -61,14 +78,21 @@ def _service_worker(interview_id: str, turn_id: str, user_id: str, result_queue)
         )
         result_queue.put({
             "pid": process_id,
-            "outcome": "committed",
+            "outcome": "success",
             "lock_wait_or_rejection_seconds": round(time.monotonic() - started, 3),
             "state_interview_id": state.get("interview_id"),
         })
-    except InterviewForbiddenError as exc:
+    except InterviewProcessingError as exc:
         result_queue.put({
             "pid": process_id,
-            "outcome": "rejected",
+            "outcome": "processing",
+            "lock_wait_or_rejection_seconds": round(time.monotonic() - started, 3),
+            "reason": str(exc),
+        })
+    except (InterviewConflictError, InterviewUnavailableError, InterviewForbiddenError) as exc:
+        result_queue.put({
+            "pid": process_id,
+            "outcome": "error",
             "lock_wait_or_rejection_seconds": round(time.monotonic() - started, 3),
             "reason": str(exc),
         })
@@ -87,6 +111,7 @@ def _query_counts(interview_id: str) -> dict[str, int]:
     with SessionLocal() as session:
         return {
             "turns": session.scalar(select(func.count(InterviewTurnRecord.id)).where(InterviewTurnRecord.interview_id == interview_id)) or 0,
+            "questions": session.scalar(select(func.count(InterviewQuestionRecord.id)).where(InterviewQuestionRecord.interview_id == interview_id)) or 0,
             "assessments": session.scalar(select(func.count(InterviewAssessmentRecord.id)).where(InterviewAssessmentRecord.interview_id == interview_id)) or 0,
             "evidence": session.scalar(select(func.count(InterviewEvidenceRecord.id)).where(InterviewEvidenceRecord.interview_id == interview_id)) or 0,
             "competencies": session.scalar(select(func.count(InterviewCompetencyStateRecord.id)).where(InterviewCompetencyStateRecord.interview_id == interview_id)) or 0,
@@ -104,8 +129,15 @@ def _assessment_rows(interview_id: str) -> list[tuple[str, str]]:
 def test_cross_process_interview_service_commits_one_turn_and_replays_idempotently():
     _prepare_database()
     user = UserStore.create(f"phase115c-{uuid4()}@example.com", "secret123", role="candidate")
+    candidate = CandidateStore.create(
+        {"name": "Concurrency Candidate", "email": user["email"]},
+        user["id"],
+        "candidate",
+    )
     service = InterviewService()
-    interview = service.start_interview("candidate-115c", "backend engineer", owner_user_id=user["id"])
+    interview = service.start_interview(
+        candidate["id"], "backend engineer", owner_user_id=user["id"], owner_role="candidate"
+    )
     interview_id = interview["interview_id"]
     turn_id = f"turn-{uuid4()}"
 
@@ -116,17 +148,35 @@ def test_cross_process_interview_service_commits_one_turn_and_replays_idempotent
         for _ in range(2)
     ]
     started = time.monotonic()
-    for process in processes:
-        process.start()
-    results = [result_queue.get(timeout=30) for _ in processes]
-    for process in processes:
-        process.join(30)
+    process_exit_codes: list[int | None] = []
+    try:
+        for process in processes:
+            process.start()
+        results = [result_queue.get(timeout=30) for _ in processes]
+        for process in processes:
+            process.join(30)
+    finally:
+        for process in processes:
+            if process.pid is not None and process.is_alive():
+                process.terminate()
+        for process in processes:
+            if process.pid is not None:
+                process.join(5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(5)
+                process_exit_codes.append(process.exitcode)
+                process.close()
+        result_queue.cancel_join_thread()
+        result_queue.close()
     elapsed = time.monotonic() - started
 
-    assert all(process.exitcode == 0 for process in processes), results
-    assert sorted(result["outcome"] for result in results) == ["committed", "rejected"]
-    assert sum(result["outcome"] == "committed" for result in results) == 1
+    assert all(exit_code == 0 for exit_code in process_exit_codes), results
+    outcomes = [result["outcome"] for result in results]
+    assert all(outcome in {"success", "processing"} for outcome in outcomes)
+    assert outcomes.count("success") >= 1
     assert _query_counts(interview_id)["turns"] == 1
+    assert _query_counts(interview_id)["questions"] == 2
     assessment_rows = _assessment_rows(interview_id)
     assert len(assessment_rows) == len(set(assessment_rows))
     assert len(assessment_rows) >= 1
@@ -142,6 +192,7 @@ def test_cross_process_interview_service_commits_one_turn_and_replays_idempotent
     )
     assert replay["interview_id"] == interview_id
     assert _query_counts(interview_id)["turns"] == 1
+    assert _query_counts(interview_id)["questions"] == 2
     assert _assessment_rows(interview_id) == assessment_rows
 
     next_turn = f"turn-{uuid4()}"
@@ -153,11 +204,18 @@ def test_cross_process_interview_service_commits_one_turn_and_replays_idempotent
 def test_interview_service_fails_closed_when_redis_is_unavailable():
     _prepare_database()
     user = UserStore.create(f"phase115c-down-{uuid4()}@example.com", "secret123", role="candidate")
+    candidate = CandidateStore.create(
+        {"name": "Unavailable Candidate", "email": user["email"]},
+        user["id"],
+        "candidate",
+    )
     service = InterviewService()
-    interview = service.start_interview("candidate-115c-down", "backend engineer", owner_user_id=user["id"])
+    interview = service.start_interview(
+        candidate["id"], "backend engineer", owner_user_id=user["id"], owner_role="candidate"
+    )
     broken = InterviewService(redis_client=__import__("redis").Redis(host="127.0.0.1", port=6399, socket_connect_timeout=0.2))
 
-    with pytest.raises(InterviewForbiddenError, match="Cannot safely process"):
+    with pytest.raises(InterviewUnavailableError, match="distributed locking is unavailable"):
         broken.submit_answer(interview["interview_id"], "answer", f"turn-{uuid4()}", user["id"], "candidate")
 
 
@@ -201,18 +259,21 @@ def running_api_processes():
         raise RuntimeError("API processes did not become healthy")
     finally:
         for process in processes:
-            process.terminate()
-        for process in processes:
-            process.wait(timeout=10)
+            _stop_api_process(process)
         for handle in log_handles:
             handle.close()
 
 
 def test_two_api_processes_coordinate_duplicate_answer(running_api_processes):
     user = UserStore.create(f"phase115c-api-{uuid4()}@example.com", "secret123", role="candidate")
+    candidate = CandidateStore.create(
+        {"name": "Cross-Process Candidate", "email": user["email"]},
+        user["id"],
+        "candidate",
+    )
     token = issue_token(user["email"], user["role"])
     headers = {"Authorization": f"Bearer {token}"}
-    start_payload = {"candidate_id": f"candidate-{uuid4()}", "position": "backend engineer", "mode": "text"}
+    start_payload = {"candidate_id": candidate["id"], "position": "backend engineer", "mode": "text"}
     start = httpx.post(f"http://127.0.0.1:{running_api_processes[0]}/api/v1/interview/start", json=start_payload, headers=headers, timeout=30)
     assert start.status_code == 200, start.text
     interview_id = start.json()["interview_id"]
@@ -227,10 +288,22 @@ def test_two_api_processes_coordinate_duplicate_answer(running_api_processes):
         ))
     elapsed = time.monotonic() - started
 
-    assert sorted(response.status_code for response in responses) == [200, 403]
+    statuses = sorted(response.status_code for response in responses)
+    assert statuses in ([200, 200], [200, 409])
+    if 409 in statuses:
+        conflict = next(response for response in responses if response.status_code == 409)
+        assert "still processing" in conflict.json()["detail"]
     assert _query_counts(interview_id)["turns"] == 1
     assessment_rows = _assessment_rows(interview_id)
     assert len(assessment_rows) == len(set(assessment_rows))
     assert len(assessment_rows) >= 1
     assert _query_counts(interview_id)["evidence"] >= 1
+    replay = httpx.post(
+        f"http://127.0.0.1:{running_api_processes[0]}/api/v1/interview/{interview_id}/answer",
+        json=payload,
+        headers=headers,
+        timeout=10,
+    )
+    assert replay.status_code == 200
+    assert _query_counts(interview_id)["turns"] == 1
     print({"interview_id": interview_id, "turn_id": turn_id, "api_statuses": [response.status_code for response in responses], "total_seconds": round(elapsed, 3)})

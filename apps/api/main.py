@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import settings
 from infrastructure.redis_store import RedisClient
+from services.database import init_db
 from services.user_store import UserStore
 from utils import get_logger, setup_logging
 
@@ -22,15 +23,38 @@ setup_logging()
 logger = get_logger(__name__)
 
 
+def ensure_dev_admin_bootstrap() -> None:
+    """Create the expected local dev/test admin if bootstrapping is enabled."""
+    if settings.ENVIRONMENT not in {"development", "test"} or not settings.ENABLE_DEV_ADMIN_BOOTSTRAP:
+        return
+    if not settings.BOOTSTRAP_ADMIN_EMAIL or not settings.BOOTSTRAP_ADMIN_PASSWORD:
+        raise RuntimeError("Development admin bootstrap requires explicit credentials")
+    UserStore.ensure_default_admin(settings.BOOTSTRAP_ADMIN_EMAIL, settings.BOOTSTRAP_ADMIN_PASSWORD)
+
+
+def validate_production_security() -> None:
+    if settings.ENVIRONMENT != "production":
+        return
+    if (
+        settings.SECRET_KEY == "your-secret-key-change-in-production"
+        or len(settings.SECRET_KEY) < 32
+    ):
+        raise RuntimeError(
+            "Production requires an explicitly configured SECRET_KEY of at least 32 characters"
+        )
+    if settings.ENABLE_DEV_ADMIN_BOOTSTRAP:
+        raise RuntimeError("ENABLE_DEV_ADMIN_BOOTSTRAP must be disabled in production")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager"""
-    
+
     # Startup
-    if settings.ENVIRONMENT == "development" and settings.ENABLE_DEV_ADMIN_BOOTSTRAP:
-        if not settings.BOOTSTRAP_ADMIN_EMAIL or not settings.BOOTSTRAP_ADMIN_PASSWORD:
-            raise RuntimeError("Development admin bootstrap requires explicit credentials")
-        UserStore.ensure_default_admin(settings.BOOTSTRAP_ADMIN_EMAIL, settings.BOOTSTRAP_ADMIN_PASSWORD)
+    validate_production_security()
+    if settings.ENVIRONMENT in {"development", "test"}:
+        init_db()
+        ensure_dev_admin_bootstrap()
     logger.info(
         "Starting AI Interviewer",
         extra={
@@ -125,22 +149,49 @@ async def health_ready():
     checks: dict[str, bool | str] = {"database": True, "redis": True}
     try:
         from sqlalchemy import create_engine, text
-        engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception:
+        with create_engine(settings.DATABASE_URL, pool_pre_ping=True) as engine:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+    except Exception as exc:
         ready = False
         checks["database"] = False
+        logger.warning(
+            "Database readiness check failed",
+            extra={"failure_type": type(exc).__name__},
+        )
 
+    client = None
     try:
         import redis
-        client = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=settings.REDIS_TIMEOUT_SECONDS)
+
+        client = redis.Redis.from_url(
+            settings.REDIS_URL,
+            socket_timeout=settings.REDIS_TIMEOUT_SECONDS,
+        )
         client.ping()
-    except Exception:
+    except Exception as exc:
         ready = False
         checks["redis"] = False
+        logger.warning(
+            "Redis readiness check failed",
+            extra={"failure_type": type(exc).__name__},
+        )
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception as exc:
+                ready = False
+                checks["redis"] = False
+                logger.warning(
+                    "Redis readiness client cleanup failed",
+                    extra={"failure_type": type(exc).__name__},
+                )
 
-    return {"ready": ready, "checks": checks}
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"ready": ready, "checks": checks},
+    )
 
 
 @app.get("/readiness", tags=["Health"])

@@ -1,16 +1,15 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from apps.api.main import app
-from services.auth_service import issue_token
+from services.auth_service import decode_token, issue_token
 from services.database import InterviewQuestionRecord, InterviewTurnRecord, SessionLocal
 from services.interview_service import InterviewService
 from services.user_store import UserStore
-
 
 client = TestClient(app)
 
@@ -20,6 +19,18 @@ def register_and_login(email: str) -> dict[str, str]:
     login = client.post("/api/v1/auth/login", json={"email": email, "password": "password123"})
     assert login.status_code == 200
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+def candidate_profile_id(headers: dict[str, str]) -> str:
+    token = headers["Authorization"].split(" ", 1)[1]
+    email = decode_token(token)["sub"]
+    profile = client.post(
+        "/api/v1/candidates",
+        json={"name": "Test Candidate", "email": email},
+        headers=headers,
+    )
+    assert profile.status_code == 200
+    return profile.json()["id"]
 
 
 def test_registration_cannot_escalate_to_admin():
@@ -42,7 +53,7 @@ def test_recruiter_cannot_submit_answers():
     recruiter_headers = {"Authorization": f"Bearer {issue_token(recruiter['email'], 'recruiter')}"}
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": "candidate-recruiter", "position": "AI Engineer"},
+        json={"candidate_id": candidate_profile_id(owner_headers), "position": "AI Engineer"},
         headers=owner_headers,
     )
     response = client.post(
@@ -58,7 +69,7 @@ def test_user_cannot_access_another_users_interview():
     other_headers = register_and_login("other@example.com")
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": "candidate-owned", "position": "AI Engineer"},
+        json={"candidate_id": candidate_profile_id(owner_headers), "position": "AI Engineer"},
         headers=owner_headers,
     )
     interview_id = start.json()["interview_id"]
@@ -71,21 +82,28 @@ def test_concurrent_duplicate_turns_create_one_record():
     headers = register_and_login("concurrent@example.com")
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": "candidate-concurrent", "position": "AI Engineer"},
+        json={"candidate_id": candidate_profile_id(headers), "position": "AI Engineer"},
         headers=headers,
     )
     interview_id = start.json()["interview_id"]
     request = {"turn_id": "concurrent-turn", "answer": "I deployed Python to production."}
 
-    def submit() -> int:
+    def submit():
         return client.post(
             f"/api/v1/interview/{interview_id}/answer", json=request, headers=headers
-        ).status_code
+        )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        statuses = list(executor.map(lambda _: submit(), range(2)))
+        responses = list(executor.map(lambda _: submit(), range(2)))
 
-    assert statuses == [200, 200]
+    statuses = [response.status_code for response in responses]
+    assert sorted(statuses) in ([200, 200], [200, 409])
+    if 409 in statuses:
+        assert "still processing" in next(
+            response.json()["detail"] for response in responses if response.status_code == 409
+        )
+        replay = submit()
+        assert replay.status_code == 200
     with SessionLocal() as session:
         turns = session.execute(
             select(InterviewTurnRecord).where(InterviewTurnRecord.interview_id == interview_id)
@@ -98,12 +116,42 @@ def test_concurrent_duplicate_turns_create_one_record():
     assert len({question.question_text for question in questions}) == 2
 
 
+def test_reusing_turn_id_with_different_answer_returns_conflict():
+    headers = register_and_login("turn-conflict@example.com")
+    start = client.post(
+        "/api/v1/interview/start",
+        json={"candidate_id": candidate_profile_id(headers), "position": "AI Engineer"},
+        headers=headers,
+    )
+    interview_id = start.json()["interview_id"]
+    first = client.post(
+        f"/api/v1/interview/{interview_id}/answer",
+        json={"turn_id": "turn-conflict", "answer": "I used Python."},
+        headers=headers,
+    )
+    second = client.post(
+        f"/api/v1/interview/{interview_id}/answer",
+        json={"turn_id": "turn-conflict", "answer": "I used Rust instead."},
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    with SessionLocal() as session:
+        turns = session.execute(
+            select(InterviewTurnRecord).where(
+                InterviewTurnRecord.interview_id == interview_id
+            )
+        ).scalars().all()
+    assert len(turns) == 1
+
+
 def test_stale_processing_turn_can_be_retried():
     headers = register_and_login("recovery@example.com")
     turn_id = f"recovery-turn-{uuid4()}"
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": "candidate-recovery", "position": "AI Engineer"},
+        json={"candidate_id": candidate_profile_id(headers), "position": "AI Engineer"},
         headers=headers,
     )
     interview_id = start.json()["interview_id"]
@@ -118,7 +166,7 @@ def test_stale_processing_turn_can_be_retried():
             select(InterviewTurnRecord).where(InterviewTurnRecord.interview_id == interview_id)
         ).scalar_one()
         turn.status = "processing"
-        turn.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        turn.updated_at = datetime.now(UTC) - timedelta(hours=1)
 
     retry = client.post(
         f"/api/v1/interview/{interview_id}/answer",
@@ -131,16 +179,22 @@ def test_stale_processing_turn_can_be_retried():
 def test_processing_failure_is_marked_retryable():
     service = InterviewService()
     turn_id = f"failed-turn-{uuid4()}"
-    state = service.start_interview(f"candidate-failure-{uuid4()}", "AI Engineer", owner_user_id="missing-user")
-    original = service.evaluator.evaluate_answer
-    service.evaluator.evaluate_answer = lambda *args: (_ for _ in ()).throw(RuntimeError("provider down"))
+    state = service.start_interview(
+        f"candidate-failure-{uuid4()}",
+        "AI Engineer",
+        owner_role="admin",
+    )
+    original = service.evaluator.evaluate_result
+    service.evaluator.evaluate_result = lambda *args: (_ for _ in ()).throw(RuntimeError("provider down"))
     try:
         try:
-            service.submit_answer(state["interview_id"], "I used Python.", turn_id, "missing-user")
+            service.submit_answer(
+                state["interview_id"], "I used Python.", turn_id, role="admin"
+            )
         except RuntimeError:
             pass
     finally:
-        service.evaluator.evaluate_answer = original
+        service.evaluator.evaluate_result = original
 
     with SessionLocal() as session:
         turn = session.execute(

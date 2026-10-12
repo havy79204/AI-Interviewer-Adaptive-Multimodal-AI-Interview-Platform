@@ -3,19 +3,36 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import DateTime, String, create_engine
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from config import settings
 
-from sqlalchemy import Float, ForeignKey, Index, Integer, Text
 
 def _resolve_database_url() -> str:
     database_url = getattr(settings, "DATABASE_URL", "")
     if database_url and database_url.startswith("postgresql"):
+        return database_url
+    default_sqlite_url = "sqlite:///./storage/ai_interviewer.db"
+    if (
+        database_url
+        and database_url.startswith("sqlite:")
+        and database_url != default_sqlite_url
+    ):
         return database_url
 
     storage_dir = Path(__file__).resolve().parent.parent / "storage"
@@ -34,7 +51,9 @@ class UserRecord(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     email: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
-    role: Mapped[str] = mapped_column(String, default="admin")
+    role: Mapped[str] = mapped_column(
+        String, default="candidate", server_default="candidate"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -45,10 +64,23 @@ class CandidateRecord(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True, index=True)
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True, unique=True, index=True)
     phone: Mapped[str | None] = mapped_column(String, nullable=True)
     resume_url: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class AccessAuditRecord(Base):
+    __tablename__ = "access_audit"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    actor_user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
 
 
 class InterviewRecord(Base):
@@ -178,6 +210,40 @@ class InterviewAssessmentRecord(Base):
     __table_args__ = (
         Index("ix_interview_assessments_interview_turn_competency", "interview_id", "turn_id", "competency", unique=True),
     )
+
+
+class RAGDocumentRecord(Base):
+    """Durable, versioned text chunks and optional semantic embeddings."""
+
+    __tablename__ = "rag_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_id: Mapped[str] = mapped_column(String, nullable=False)
+    chunk_id: Mapped[str] = mapped_column(String, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    document_type: Mapped[str] = mapped_column(String, nullable=False)
+    competency_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    organization_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    difficulty: Mapped[str | None] = mapped_column(String, nullable=True)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str] = mapped_column(String, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    language: Mapped[str] = mapped_column(String, nullable=False, default="en")
+    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    embedding_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    embedding_dimension: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    embedding_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_id", "version", name="uq_rag_document_chunk_version"),
+        Index("ix_rag_document_filters", "active", "job_id", "competency_id", "difficulty"),
+        Index("ix_rag_document_embedding_model", "embedding_model", "embedding_dimension"),
+    )
+
 
 engine = create_engine(_resolve_database_url(), future=True, echo=settings.SQLALCHEMY_ECHO)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)

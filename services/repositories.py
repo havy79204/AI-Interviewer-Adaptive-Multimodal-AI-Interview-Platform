@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from services.database import (
+    CandidateRecord,
     InterviewAssessmentRecord,
     InterviewCompetencyStateRecord,
     InterviewEvidenceRecord,
@@ -40,6 +41,8 @@ class InterviewRepository:
         session.add(InterviewQuestionRecord(
             interview_id=interview.id,
             sequence_number=1,
+            competency=state.get("current_competency"),
+            difficulty=state.get("difficulty"),
             question_text=interview.current_question,
             status="sent",
             generated_at=now,
@@ -55,15 +58,58 @@ class InterviewRepository:
         self, session: Session, interview_id: str, user_id: str, role: str
     ) -> InterviewRecord | None:
         query = select(InterviewRecord).where(InterviewRecord.id == interview_id)
-        if role not in {"admin", "recruiter"}:
-            query = query.where(InterviewRecord.owner_user_id == user_id)
+        if role == "admin":
+            return session.execute(query).scalar_one_or_none()
+        if role == "recruiter":
+            query = (
+                query.join(CandidateRecord, CandidateRecord.id == InterviewRecord.candidate_id)
+                .where(
+                    InterviewRecord.owner_user_id == user_id,
+                    CandidateRecord.owner_user_id == user_id,
+                )
+            )
+        elif role == "candidate":
+            query = (
+                query.join(CandidateRecord, CandidateRecord.id == InterviewRecord.candidate_id)
+                .where(CandidateRecord.user_id == user_id)
+            )
+        else:
+            return None
         return session.execute(query).scalar_one_or_none()
 
     def list_authorized(self, session: Session, user_id: str, role: str) -> list[InterviewRecord]:
         query = select(InterviewRecord).order_by(InterviewRecord.created_at.desc())
-        if role not in {"admin", "recruiter"}:
-            query = query.where(InterviewRecord.owner_user_id == user_id)
+        if role == "admin":
+            pass
+        elif role == "recruiter":
+            query = (
+                query.join(CandidateRecord, CandidateRecord.id == InterviewRecord.candidate_id)
+                .where(
+                    InterviewRecord.owner_user_id == user_id,
+                    CandidateRecord.owner_user_id == user_id,
+                )
+            )
+        elif role == "candidate":
+            query = (
+                query.join(CandidateRecord, CandidateRecord.id == InterviewRecord.candidate_id)
+                .where(CandidateRecord.user_id == user_id)
+            )
+        else:
+            return []
         return list(session.execute(query).scalars().all())
+
+    @staticmethod
+    def can_manage_candidate(session: Session, candidate_id: str, user_id: str, role: str) -> bool:
+        if role == "admin":
+            return True
+        candidate = session.get(CandidateRecord, candidate_id)
+        if candidate is None:
+            return False
+        if role == "recruiter":
+            return candidate.owner_user_id == user_id
+        if role == "candidate":
+            return candidate.user_id == user_id
+        return False
 
     def list(self, session: Session) -> list[InterviewRecord]:
         return list(session.execute(
@@ -98,6 +144,8 @@ class InterviewRepository:
         question = InterviewQuestionRecord(
             interview_id=interview.id,
             sequence_number=question_count + 1,
+            competency=state.get("current_competency"),
+            difficulty=state.get("difficulty"),
             question_text=state["current_question"],
             status="sent",
             generated_at=now,
@@ -123,7 +171,6 @@ class InterviewRepository:
                 started_at=now,
             )
             session.add(turn)
-        turn.question_id = question.id
         validate_turn_transition(turn.status, "completed")
         turn.status = "completed"
         turn.updated_at = now
@@ -172,6 +219,7 @@ class EvaluationRepository:
                 evidence_type=item.evidence_type,
                 strength=item.strength.value,
                 specificity=item.specificity,
+                ownership=item.ownership,
                 relevance=item.relevance,
                 evaluator_type=assessment.evaluator_type,
                 evaluator_version=assessment.evaluator_version,
@@ -240,10 +288,10 @@ class TurnRepository:
     def reclaim_if_stale(self, turn: InterviewTurnRecord, lease_seconds: int) -> bool:
         if turn.status != "processing":
             return False
-        updated_at = turn.updated_at or turn.started_at or datetime.now(timezone.utc)
+        updated_at = turn.updated_at or turn.started_at or datetime.now(UTC)
         if updated_at.tzinfo is None:
-            updated_at = updated_at.replace(tzinfo=timezone.utc)
-        if updated_at > datetime.now(timezone.utc) - timedelta(seconds=lease_seconds):
+            updated_at = updated_at.replace(tzinfo=UTC)
+        if updated_at > datetime.now(UTC) - timedelta(seconds=lease_seconds):
             return False
         self.transition(turn, "failed_retryable")
         self.transition(turn, "processing")
