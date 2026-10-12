@@ -38,14 +38,30 @@
 ### Tenant and account-linking boundary
 
 - There is no organization/company or membership table. Organization identifiers appear as RAG document metadata only.
-- Existing data has nullable candidate owner/account-link fields. Legacy unowned records are not automatically attributed; controlled admin review/assignment is still required.
-- Recruiter-created candidate records do not have a secure production flow for linking the candidate's later account. Direct linking in the live E2E fixture is test-only.
+- Candidate accounts now default to unverified. Since the application has no email-delivery or verification provider, an authenticated admin must attest that email was verified out of band at `POST /api/v1/admin/users/{user_id}/verify-email` with `{"confirmation":"confirmed_out_of_band"}`. The operation is one-way and recorded in `access_audit`; public registration cannot set this state.
+- A recruiter can create an invitation only for an owned, unlinked profile whose normalized email matches an existing verified candidate account. `POST /api/v1/candidates/{candidate_id}/invitations` returns an unpredictable token once, valid for 72 hours. The database stores only its SHA-256 digest. The recruiter must deliver the token to the candidate through a controlled channel associated with the already verified address; the API does not send email.
+- The candidate must authenticate as the matching verified account and redeem with `POST /api/v1/candidate-invitations/redeem` and `{"token":"<one-time token>"}`. In one transaction the service conditionally assigns the profile, consumes the invitation, and writes the candidate-link audit event. An invitation can be revoked by its owning recruiter with `DELETE /api/v1/candidates/{candidate_id}/invitations`. Creation is limited to one per profile per minute and 20 per recruiter per hour; redemption is limited to 20 attempts per account per 15 minutes.
+- Unknown, malformed, expired, consumed, revoked, and email-mismatched tokens return the same safe `400` response. Ownership violations return `404`; unauthorized roles return `403`; eligibility conflicts return `409`; bounded-rate violations return `429`. Public endpoints do not expose whether an unrelated user's email exists.
+- The existing unique candidate `user_id` constraint prevents one account being linked to multiple profiles. Candidate email remains unique, and the redemption transaction also requires the stored profile email, invitation email, verified account email, and recruiter ownership to agree. A second claim of a profile is rejected by a conditional update.
+- The new migration adds nullable `users.email_verified_at` and invitation storage without assigning owners or links to legacy candidates. No admin API for legacy ownership assignment is provided. For each legacy row, an operator must independently establish the correct recruiter through authoritative records, take a backup, use a reviewed maintenance transaction to set `candidates.owner_user_id` and insert a matching `access_audit` event, and verify both values before restoring service. Never infer ownership from name or email alone; leave unresolved rows unassigned.
+- The authentication and profile-link flow is implemented and locally tested with SQLite. Email verification is an explicit manual dependency, token delivery is operational/out-of-band, and PostgreSQL transaction/locking behavior still requires controlled verification before production use.
 - RAG filters exclude scoped documents when a request is unscoped, but they are retrieval filters, not an API authorization boundary. Organization metadata must not be treated as authenticated tenant identity.
 - **Supported boundary:** controlled, isolated single-tenant synthetic demo only. **Not supported:** multi-tenant demo or production customer data.
 
+#### Candidate invitation API contract
+
+| Operation | Authentication | Request | Success |
+|---|---|---|---|
+| `POST /api/v1/admin/users/{user_id}/verify-email` | Admin | `{"confirmation":"confirmed_out_of_band"}` | `200`, user ID and verification timestamp; records admin actor in `access_audit`. |
+| `POST /api/v1/candidates/{candidate_id}/invitations` | Owning recruiter | No body; the address is taken from the stored profile and must match a verified candidate account. | `201`, `{invitation_id, token, expires_at}`. Token is returned only at creation and must not be logged. |
+| `DELETE /api/v1/candidates/{candidate_id}/invitations` | Owning recruiter | No body. | `200`, `{revoked:true}`; one pending invitation is revoked and audited. |
+| `POST /api/v1/candidate-invitations/redeem` | Verified candidate account | `{"token":"<invitation token>"}` | `200`, `{candidate_id}`. The token is single-use and expires after 72 hours. |
+
+All payloads reject extra fields. Verification succeeds only when an admin explicitly attests to out-of-band verification; no registration email is trusted as verified. Invitation delivery is not implemented. Send tokens only through an approved controlled channel, never log them or include them in support diagnostics. Expired, used, revoked, unknown, malformed, and mismatched invitations share the same `400` response.
+
 ### Persistence, evaluation, RAG, and reports
 
-- The active path is FastAPI → SQLAlchemy → configured database. Alembic owns schema changes; development startup initializes metadata only in development/test. Existing offline migration evidence reached `a4d2_resource_ownership (head)` on a temporary SQLite database; no migration was added in this task.
+- The active path is FastAPI → SQLAlchemy → configured database. Alembic owns schema changes; development startup initializes metadata only in development/test. P0.12 adds `b6c9_candidate_invitations` after `a4d2_resource_ownership`; migration preservation and downgrade/re-upgrade are covered by a disposable SQLite test.
 - Interview turn writes use transactions and preserve duplicate-turn replay and conflicting-answer rejection. The cross-process idempotency regression passed in the focused run.
 - Structured evaluation is schema-validated and persisted with the interview turn. Controlled offline tests exercise malformed output, provider timeout handling, retryable state, and persistence failure paths; these do not establish provider quality.
 - RAG stores document metadata and optional vectors in SQLAlchemy. When embeddings are unavailable or invalid, retrieval is explicitly labeled lexical-only rather than silently substituting hash vectors.
@@ -66,9 +82,9 @@
 | Priority | Finding | Status / required action |
 |---|---|---|
 | P0 | No organization-level authorization or tenant membership model. | **Open release blocker.** Keep use to an isolated single-tenant synthetic demo until the model, migrations, and cross-tenant tests exist. |
-| P0 | Recruiter-to-candidate account linking and legacy ownership assignment are incomplete. | **Open release blocker.** Implement an authorized, auditable linking/assignment workflow before onboarding real candidate accounts or using legacy records. |
+| P0 | Organization-level authorization and tenant membership are not implemented. | **Open release blocker.** Keep use to an isolated single-tenant synthetic demo until the model, migrations, and cross-tenant tests exist. |
+| P0 | Automated email verification/delivery, operator-managed legacy assignment, and PostgreSQL verification are not implemented. | **Manual dependency / not production-ready.** The new account-link API requires verified accounts and supports only out-of-band admin attestation and controlled token delivery. Legacy records remain unassigned. |
 | P1 | Live model output, real embeddings, live E2E, PostgreSQL, and production deployment have not been verified in this environment. | **Blocked/unverified.** Run only with authorized credentials, isolated databases, operator-controlled spend caps, and human review. |
-| P1 | CI's full unit command has no explicit timeout; integration tests and pylint, mypy, and bandit commands suppress failures with `|| true`. | **Open reliability gap.** The next smallest safe engineering task is to make CI bounded and failure-signaling, then split known slow tests into separately capped jobs. |
 | P2 | Full-suite completion and provider-backed semantic quality remain unknown. | **Not run / blocked.** Do not infer a pass from focused tests or lexical metrics. |
 
 ## Current environment and live-provider status
@@ -136,8 +152,8 @@ The pytest safety guard accepts this `storage\test_*.db` URL and rejects missing
 
 ## Next steps
 
-1. Make CI test/quality checks bounded and remove failure suppression; keep integration tests independently capped.
-2. Complete organization membership, tenant-scoped database queries, migrations, and cross-organization tests before any multi-tenant use.
-3. Design a secure candidate account-linking and legacy-record assignment workflow.
+1. Verify the P0.12 changes on the published CI workflow across Python 3.11 and 3.12, including the new account-linking and migration tests.
+2. Add an approved email-verification and invitation-delivery provider, or define the production operational controls for the manual path.
+3. Complete organization membership, tenant-scoped database queries, migrations, and cross-organization tests before any multi-tenant use.
 4. Have an authorized operator run P0.6 live smoke/E2E verification with a dedicated SQLite database and the documented spend cap; require human review of the six real outputs.
 5. Verify PostgreSQL and deployment configuration in a controlled environment before production use.

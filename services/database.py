@@ -54,8 +54,46 @@ class UserRecord(Base):
     role: Mapped[str] = mapped_column(
         String, default="candidate", server_default="candidate"
     )
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class CandidateInvitationRecord(Base):
+    __tablename__ = "candidate_invitations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    candidate_id: Mapped[str] = mapped_column(
+        String, ForeignKey("candidates.id"), nullable=False, index=True
+    )
+    recruiter_user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_candidate_invitations_one_pending_per_candidate",
+            "candidate_id",
+            unique=True,
+            sqlite_where=(consumed_at.is_(None) & revoked_at.is_(None)),
+            postgresql_where=(consumed_at.is_(None) & revoked_at.is_(None)),
+        ),
+        Index(
+            "ix_candidate_invitations_recruiter_created",
+            "recruiter_user_id",
+            "created_at",
+        ),
+    )
 
 
 class CandidateRecord(Base):

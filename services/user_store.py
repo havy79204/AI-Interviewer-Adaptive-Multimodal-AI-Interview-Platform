@@ -13,11 +13,14 @@ from services.security_utils import hash_password
 class UserStore:
     @classmethod
     def create(cls, email: str, password: str, role: str = "candidate") -> dict[str, Any]:
+        normalized_email = email.strip().lower()
         with SessionLocal() as session:
-            existing = session.execute(select(UserRecord).where(UserRecord.email == email)).scalar_one_or_none()
+            existing = session.execute(
+                select(UserRecord).where(UserRecord.email == normalized_email)
+            ).scalar_one_or_none()
             if existing is not None:
                 return {"email": existing.email, "role": existing.role, "password_hash": existing.password_hash}
-            user = UserRecord(email=email.lower(), password_hash=hash_password(password), role=role)
+            user = UserRecord(email=normalized_email, password_hash=hash_password(password), role=role)
             session.add(user)
             session.commit()
             session.refresh(user)
@@ -25,8 +28,11 @@ class UserStore:
 
     @classmethod
     def get_by_email(cls, email: str) -> dict[str, Any] | None:
+        normalized_email = email.strip().lower()
         with SessionLocal() as session:
-            user = session.execute(select(UserRecord).where(UserRecord.email == email.lower())).scalar_one_or_none()
+            user = session.execute(
+                select(UserRecord).where(UserRecord.email == normalized_email)
+            ).scalar_one_or_none()
             if user is None:
                 return None
             return {"id": user.id, "email": user.email, "role": user.role, "password_hash": user.password_hash}

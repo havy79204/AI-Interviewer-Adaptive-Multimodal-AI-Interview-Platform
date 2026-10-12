@@ -210,12 +210,14 @@ async def liveness_check():
 # API Routes (to be implemented)
 # ==========================================
 
+from apps.api.v1.routes.account_linking import router as account_linking_router
 from apps.api.v1.routes.auth import router as auth_router
 from apps.api.v1.routes.candidate import router as candidate_router
 from apps.api.v1.routes.interview import router as interview_router
 from apps.api.websocket.interview import router as websocket_router
 
 app.include_router(auth_router, prefix=settings.API_PREFIX)
+app.include_router(account_linking_router, prefix=settings.API_PREFIX)
 app.include_router(candidate_router, prefix=settings.API_PREFIX)
 app.include_router(interview_router, prefix=settings.API_PREFIX)
 app.include_router(websocket_router)
