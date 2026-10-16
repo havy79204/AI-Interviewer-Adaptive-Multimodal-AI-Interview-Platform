@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from services.database import (
@@ -25,10 +25,20 @@ from services.turn_state import validate_turn_transition
 class InterviewRepository:
     """Persistence operations for interviews; transaction ownership stays with the caller."""
 
-    def create(self, session: Session, state: dict[str, Any], owner_user_id: str | None = None) -> InterviewRecord:
+    def create(
+        self,
+        session: Session,
+        state: dict[str, Any],
+        owner_user_id: str | None = None,
+        start_request_key: str | None = None,
+        start_request_hash: str | None = None,
+    ) -> InterviewRecord:
         interview = InterviewRecord(
             id=state["interview_id"],
             owner_user_id=owner_user_id,
+            start_request_key=start_request_key,
+            start_request_hash=start_request_hash,
+            start_request_status="complete" if start_request_key is not None else None,
             candidate_id=state["candidate_id"],
             position=state["position"],
             mode=state.get("mode", "text"),
@@ -37,6 +47,100 @@ class InterviewRepository:
         )
         session.add(interview)
         session.flush()
+        now = datetime.fromisoformat(state["created_at"])
+        self._add_initial_question(session, interview, state)
+        session.flush()
+        return interview
+
+    def reserve_start(
+        self,
+        session: Session,
+        *,
+        interview_id: str,
+        candidate_id: str,
+        position: str,
+        mode: str,
+        owner_user_id: str | None,
+        request_key: str,
+        request_hash: str,
+        request_owner: str,
+        now: datetime,
+    ) -> InterviewRecord:
+        reservation_state = {
+            "interview_id": interview_id,
+            "candidate_id": candidate_id,
+            "position": position,
+            "mode": mode,
+            "status": "planning",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+        reservation = InterviewRecord(
+            id=interview_id,
+            owner_user_id=owner_user_id,
+            start_request_key=request_key,
+            start_request_hash=request_hash,
+            start_request_status="planning",
+            start_request_owner=request_owner,
+            candidate_id=candidate_id,
+            position=position,
+            mode=mode,
+            current_question="",
+            state_json=json.dumps(reservation_state),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(reservation)
+        session.flush()
+        return reservation
+
+    def complete_start(
+        self,
+        session: Session,
+        *,
+        interview_id: str,
+        request_owner: str,
+        state: dict[str, Any],
+    ) -> bool:
+        result = session.execute(
+            update(InterviewRecord)
+            .where(
+                InterviewRecord.id == interview_id,
+                InterviewRecord.start_request_status == "planning",
+                InterviewRecord.start_request_owner == request_owner,
+            )
+            .values(
+                current_question=state["current_question"],
+                state_json=json.dumps(state),
+                start_request_status="complete",
+                start_request_owner=None,
+                updated_at=datetime.fromisoformat(state["updated_at"]),
+            )
+        )
+        if result.rowcount != 1:
+            return False
+        interview = session.get(InterviewRecord, interview_id)
+        if interview is None:
+            return False
+        self._add_initial_question(session, interview, state)
+        session.flush()
+        return True
+
+    def release_start_reservation(
+        self, session: Session, interview_id: str, request_owner: str
+    ) -> None:
+        session.execute(
+            delete(InterviewRecord).where(
+                InterviewRecord.id == interview_id,
+                InterviewRecord.start_request_status == "planning",
+                InterviewRecord.start_request_owner == request_owner,
+            )
+        )
+
+    @staticmethod
+    def _add_initial_question(
+        session: Session, interview: InterviewRecord, state: dict[str, Any]
+    ) -> None:
         now = datetime.fromisoformat(state["created_at"])
         session.add(InterviewQuestionRecord(
             interview_id=interview.id,
@@ -48,8 +152,6 @@ class InterviewRepository:
             generated_at=now,
             sent_at=now,
         ))
-        session.flush()
-        return interview
 
     def get(self, session: Session, interview_id: str) -> InterviewRecord | None:
         return session.get(InterviewRecord, interview_id)
@@ -57,7 +159,13 @@ class InterviewRepository:
     def get_authorized(
         self, session: Session, interview_id: str, user_id: str, role: str
     ) -> InterviewRecord | None:
-        query = select(InterviewRecord).where(InterviewRecord.id == interview_id)
+        query = select(InterviewRecord).where(
+            InterviewRecord.id == interview_id,
+            or_(
+                InterviewRecord.start_request_status.is_(None),
+                InterviewRecord.start_request_status != "planning",
+            ),
+        )
         if role == "admin":
             return session.execute(query).scalar_one_or_none()
         if role == "recruiter":
@@ -78,7 +186,16 @@ class InterviewRepository:
         return session.execute(query).scalar_one_or_none()
 
     def list_authorized(self, session: Session, user_id: str, role: str) -> list[InterviewRecord]:
-        query = select(InterviewRecord).order_by(InterviewRecord.created_at.desc())
+        query = (
+            select(InterviewRecord)
+            .where(
+                or_(
+                    InterviewRecord.start_request_status.is_(None),
+                    InterviewRecord.start_request_status != "planning",
+                )
+            )
+            .order_by(InterviewRecord.created_at.desc())
+        )
         if role == "admin":
             pass
         elif role == "recruiter":

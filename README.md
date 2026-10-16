@@ -303,33 +303,15 @@ make run-eval
 
 ## 💾 Environment Variables
 
-See `.env.example` for full list:
+Copy `.env.example` to `.env` for the supported local configuration. It uses
+SQLite by default and disables live LLM calls until a provider is explicitly
+configured. CORS list values must remain JSON arrays.
 
-```env
-# API
-API_HOST=0.0.0.0
-API_PORT=8000
-
-# Database
-DATABASE_URL=postgresql://...
-SUPABASE_URL=...
-SUPABASE_KEY=...
-
-# LLM
-OPENAI_API_KEY=...
-ANTHROPIC_API_KEY=...
-
-# Voice
-ELEVEN_LABS_API_KEY=...
-ASSEMBLY_AI_API_KEY=...
-
-# Observability
-LANGWATCH_API_KEY=...
-SENTRY_DSN=...
-
-# Feature Flags
-LAUNCH_DARKLY_KEY=...
-```
+Set `LLM_PROVIDER=openai` and provide `OPENAI_API_KEY` through a secure local
+environment or secret manager to enable question planning. Confirm that the
+configured model is available to the account before making provider requests.
+Do not copy sample PostgreSQL URLs or placeholder credentials into a development
+`.env`; use a dedicated database URL only for an intentional test or deployment.
 
 ---
 
