@@ -7,6 +7,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -111,12 +112,13 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     """Handle validation errors"""
+    errors = [
+        {key: value for key, value in error.items() if key != "ctx"}
+        for error in exc.errors()
+    ]
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "detail": exc.errors(),
-            "status_code": 422,
-        },
+        content=jsonable_encoder({"detail": errors, "status_code": 422}),
     )
 
 
@@ -149,9 +151,13 @@ async def health_ready():
     checks: dict[str, bool | str] = {"database": True, "redis": True}
     try:
         from sqlalchemy import create_engine, text
-        with create_engine(settings.DATABASE_URL, pool_pre_ping=True) as engine:
+
+        engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+        try:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
+        finally:
+            engine.dispose()
     except Exception as exc:
         ready = False
         checks["database"] = False

@@ -1,6 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from tracemalloc import start
 from uuid import uuid4
+from wsgiref import headers
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -10,8 +12,20 @@ from services.auth_service import decode_token, issue_token
 from services.database import InterviewQuestionRecord, InterviewTurnRecord, SessionLocal
 from services.interview_service import InterviewService
 from services.user_store import UserStore
+from agents.interview_agent.graph import InterviewAgentCore
+from tests.unit.test_question_planning import (
+    SampleAdaptiveEvaluator,
+    _configure_adaptive_service,
+)
 
 client = TestClient(app)
+
+def configure_test_planning(monkeypatch):
+    service, _ = _configure_adaptive_service(
+        monkeypatch,
+        SampleAdaptiveEvaluator(),
+    )
+    return service
 
 
 def register_and_login(email: str) -> dict[str, str]:
@@ -46,16 +60,30 @@ def test_registration_cannot_escalate_to_admin():
     assert login.json()["user"]["role"] == "candidate"
 
 
-def test_recruiter_cannot_submit_answers():
+def test_recruiter_cannot_submit_answers(monkeypatch):
+    configure_test_planning(monkeypatch)
     owner_headers = register_and_login("recruiter-owner@example.com")
     UserStore.create("recruiter@example.com", "password123", role="recruiter")
     recruiter = UserStore.get_by_email("recruiter@example.com")
     recruiter_headers = {"Authorization": f"Bearer {issue_token(recruiter['email'], 'recruiter')}"}
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": candidate_profile_id(owner_headers), "position": "AI Engineer"},
+        json={
+        "candidate_id": candidate_profile_id(owner_headers),
+        "position": "AI Engineer",
+        "job_description": (
+            "We need an AI Engineer experienced in Python, "
+            "PyTorch, computer vision, testing, and production deployment."
+        ),
+    },
         headers=owner_headers,
     )
+    assert start.status_code == 200, (
+        f"Interview creation failed: "
+        f"status={start.status_code}, response={start.text}"
+    )
+    interview_id = start.json()["interview_id"]
+    
     response = client.post(
         f"/api/v1/interview/{start.json()['interview_id']}/answer",
         json={"turn_id": "recruiter-turn", "answer": "I used Python."},
@@ -64,27 +92,51 @@ def test_recruiter_cannot_submit_answers():
     assert response.status_code == 403
 
 
-def test_user_cannot_access_another_users_interview():
+def test_user_cannot_access_another_users_interview(monkeypatch):
+    configure_test_planning(monkeypatch)
     owner_headers = register_and_login("owner@example.com")
     other_headers = register_and_login("other@example.com")
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": candidate_profile_id(owner_headers), "position": "AI Engineer"},
+        json={
+        "candidate_id": candidate_profile_id(owner_headers),
+        "position": "AI Engineer",
+        "job_description": (
+            "We need an AI Engineer experienced in Python, "
+            "PyTorch, computer vision, testing, and production deployment."
+        ),
+    },
         headers=owner_headers,
     )
+    assert start.status_code == 200, (
+    f"Interview creation failed: "
+    f"status={start.status_code}, response={start.text}"
+)
     interview_id = start.json()["interview_id"]
 
     response = client.get(f"/api/v1/interview/{interview_id}", headers=other_headers)
     assert response.status_code == 404
 
 
-def test_concurrent_duplicate_turns_create_one_record():
+def test_concurrent_duplicate_turns_create_one_record(monkeypatch):
+    configure_test_planning(monkeypatch)
     headers = register_and_login("concurrent@example.com")
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": candidate_profile_id(headers), "position": "AI Engineer"},
+        json={
+        "candidate_id": candidate_profile_id(headers),
+        "position": "AI Engineer",
+        "job_description": (
+            "We need an AI Engineer experienced in Python, "
+            "PyTorch, computer vision, testing, and production deployment."
+        ),
+    },
         headers=headers,
     )
+    assert start.status_code == 200, (
+    f"Interview creation failed: "
+    f"status={start.status_code}, response={start.text}"
+)
     interview_id = start.json()["interview_id"]
     request = {"turn_id": "concurrent-turn", "answer": "I deployed Python to production."}
 
@@ -116,13 +168,25 @@ def test_concurrent_duplicate_turns_create_one_record():
     assert len({question.question_text for question in questions}) == 2
 
 
-def test_reusing_turn_id_with_different_answer_returns_conflict():
+def test_reusing_turn_id_with_different_answer_returns_conflict(monkeypatch):
+    configure_test_planning(monkeypatch)
     headers = register_and_login("turn-conflict@example.com")
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": candidate_profile_id(headers), "position": "AI Engineer"},
+        json={
+        "candidate_id": candidate_profile_id(headers),
+        "position": "AI Engineer",
+        "job_description": (
+            "We need an AI Engineer experienced in Python, "
+            "PyTorch, computer vision, testing, and production deployment."
+        ),
+    },
         headers=headers,
     )
+    assert start.status_code == 200, (
+    f"Interview creation failed: "
+    f"status={start.status_code}, response={start.text}"
+)
     interview_id = start.json()["interview_id"]
     first = client.post(
         f"/api/v1/interview/{interview_id}/answer",
@@ -146,14 +210,26 @@ def test_reusing_turn_id_with_different_answer_returns_conflict():
     assert len(turns) == 1
 
 
-def test_stale_processing_turn_can_be_retried():
+def test_stale_processing_turn_can_be_retried(monkeypatch):
+    configure_test_planning(monkeypatch)
     headers = register_and_login("recovery@example.com")
     turn_id = f"recovery-turn-{uuid4()}"
     start = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": candidate_profile_id(headers), "position": "AI Engineer"},
+            json={
+        "candidate_id": candidate_profile_id(headers),
+        "position": "AI Engineer",
+        "job_description": (
+            "We need an AI Engineer experienced in Python, "
+            "PyTorch, computer vision, testing, and production deployment."
+        ),
+    },
         headers=headers,
     )
+    assert start.status_code == 200, (
+    f"Interview creation failed: "
+    f"status={start.status_code}, response={start.text}"
+)
     interview_id = start.json()["interview_id"]
     first = client.post(
         f"/api/v1/interview/{interview_id}/answer",
@@ -176,13 +252,20 @@ def test_stale_processing_turn_can_be_retried():
     assert retry.status_code == 200
 
 
-def test_processing_failure_is_marked_retryable():
-    service = InterviewService()
+def test_processing_failure_is_marked_retryable(monkeypatch):
+    service, _ = _configure_adaptive_service(
+        monkeypatch,
+        SampleAdaptiveEvaluator(),
+    )
     turn_id = f"failed-turn-{uuid4()}"
     state = service.start_interview(
         f"candidate-failure-{uuid4()}",
         "AI Engineer",
         owner_role="admin",
+        job_description=(
+            "We need an AI Engineer experienced in Python, "
+            "PyTorch, computer vision, testing, and production deployment."
+        ),
     )
     original = service.evaluator.evaluate_result
     service.evaluator.evaluate_result = lambda *args: (_ for _ in ()).throw(RuntimeError("provider down"))

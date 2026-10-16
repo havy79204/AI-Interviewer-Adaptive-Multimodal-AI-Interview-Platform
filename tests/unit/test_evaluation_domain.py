@@ -70,10 +70,15 @@ def test_interview_aggregation_does_not_turn_missing_competency_into_zero_assess
 def test_answer_persists_evidence_assessment_and_versioned_competency_state():
     service = InterviewService()
     state = service.start_interview(
-        f"evaluation-candidate-{uuid4()}",
-        "AI Engineer",
+        candidate_id=f"evaluation-candidate-{uuid4()}",
+        position="AI Engineer",
         owner_role="admin",
+        job_description=(
+            "We need an AI Engineer experienced in Python, "
+            "PyTorch, computer vision, model evaluation, and production deployment."
+        ),
     )
+
     service.submit_answer(
         state["interview_id"],
         "I implemented a Python API and reduced latency by 40%.",

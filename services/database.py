@@ -126,6 +126,10 @@ class InterviewRecord(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     owner_user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True, index=True)
+    start_request_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    start_request_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    start_request_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    start_request_owner: Mapped[str | None] = mapped_column(String, nullable=True)
     candidate_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     position: Mapped[str] = mapped_column(String, nullable=False)
     mode: Mapped[str] = mapped_column(String, nullable=False, default="text")
@@ -133,6 +137,9 @@ class InterviewRecord(Base):
     state_json: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        Index("uq_interviews_start_request_key", "start_request_key", unique=True),
+    )
 
 
 class InterviewTurnRecord(Base):
