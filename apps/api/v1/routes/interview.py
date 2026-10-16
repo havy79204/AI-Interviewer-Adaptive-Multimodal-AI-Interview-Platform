@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from agents.interview_agent.graph import QuestionPlanningError
 
 from services.auth_service import current_user
 from services.interview_service import (
@@ -15,11 +17,15 @@ from services.interview_service import (
     InterviewForbiddenError,
     InterviewNotFoundError,
     InterviewProcessingError,
+    InterviewStartConflictError,
     InterviewService,
     InterviewUnavailableError,
 )
 from services.report_service import ReportService
 
+import logging
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
 _current_user = Depends(current_user)
 
@@ -33,7 +39,9 @@ class InterviewStartRequest(BaseModel):
     candidate_id: str = Field(..., min_length=1)
     position: str = Field(..., min_length=1)
     mode: str = "text"
-
+    job_description: str | None = Field(default=None, min_length=1)
+    candidate_resume: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
 
 class InterviewAnswerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -46,12 +54,39 @@ class InterviewAnswerRequest(BaseModel):
 async def start_interview(
     payload: InterviewStartRequest, user=_current_user
 ) -> dict[str, Any]:
+
+    if not payload.job_description or not payload.job_description.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="job_description is required to plan interview questions",
+        )
     try:
         return service.start_interview(
-            payload.candidate_id, payload.position, payload.mode, user["id"], user["role"]
+            payload.candidate_id,
+            payload.position,
+            payload.mode,
+            user["id"],
+            user["role"],
+            job_description=payload.job_description,
+            candidate_resume=payload.candidate_resume,
+            idempotency_key=payload.idempotency_key,
         )
     except InterviewNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found") from exc
+    except InterviewStartConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except InterviewProcessingError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except QuestionPlanningError as exc:
+        logger.error(
+            "Interview question planning failed: %s",
+            type(exc).__name__,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Interview question planning is temporarily unavailable",
+        ) from exc
 
 
 @router.post("/interview/{interview_id}/answer", tags=["Interview"])

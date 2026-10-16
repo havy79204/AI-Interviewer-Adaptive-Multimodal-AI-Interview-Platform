@@ -46,7 +46,14 @@ def create_candidate(client: TestClient, headers: dict[str, str], email: str | N
 def start_interview(client: TestClient, headers: dict[str, str], candidate_id: str) -> str:
     response = client.post(
         "/api/v1/interview/start",
-        json={"candidate_id": candidate_id, "position": "Synthetic Engineer"},
+        json={
+    "candidate_id": candidate_id,
+    "position": "Synthetic Engineer",
+    "job_description": (
+        "We are seeking a Synthetic Engineer with Python, "
+        "REST APIs, SQL, and problem-solving skills."
+    ),
+},
         headers=headers,
     )
     assert response.status_code == 200, response.text
