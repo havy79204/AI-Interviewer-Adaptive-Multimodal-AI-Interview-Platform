@@ -12,8 +12,9 @@
 - **Một phần / tùy cấu hình:** OpenAI LLM và embeddings; voice provider AssemblyAI/ElevenLabs;
   PDF parsing và indexing offline. Mặc định hiện tại lần lượt là `LLM_PROVIDER=none`,
   thiếu embedding key sẽ retrieval lexical-only, voice dùng fake providers.
-- **Chưa được nối vào runtime:** PDF `data_origin` và kết quả `data_parser`/`indexed` không được
-  `rag.ingest` đọc. Runtime ingest hiện tại nhận corpus JSON demo.
+- **Pipeline file:** PDF `data_origin` và Markdown `data_parser` vẫn là đầu vào offline.
+  `rag.ingest` nạp corpus demo cùng JSON đã indexing trong `documents/indexed` cho CV, JD,
+  company và knowledge. Việc xử lý các PDF thật chưa được xác minh ở đây.
 - **Mục tiêu thiết kế, chưa có bằng chứng implementation:** nhận JD/CV làm ngữ cảnh interview,
   dùng company PDF trong retrieval, cố định 10 câu hỏi, pass khi đạt ít nhất 3/5 câu.
 - **Chưa triển khai:** video interview; giao diện sản phẩm React/HR hoàn chỉnh.
@@ -87,18 +88,18 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph Offline["Pipeline file offline — không nối với runtime ingest"]
+    subgraph Offline["Chuẩn bị và indexing file"]
         PDFs["rag/documents/data_origin<br/>company.pdf, cv.pdf, jd.pdf, knowledge.pdf"]
         Docling["extract_with_docling.py<br/>Docling PDF to Markdown"]
         Parsed["rag/documents/data_parser<br/>Markdown theo category"]
-        IndexScript["run_indexing.py<br/>mặc định chỉ xử lý cv"]
-        Indexed["rag/documents/indexed<br/>JSON; không được rag.ingest nạp"]
+        IndexScript["run_indexing.py<br/>cv, jd, company, knowledge, policy"]
+        Indexed["rag/documents/indexed<br/>JSON chunks by document type"]
         PDFs --> Docling --> Parsed --> IndexScript --> Indexed
     end
 
     subgraph Runtime["Runtime RAG"]
         Demo["rag/corpus/demo_v1.json<br/>synthetic/versioned chunks"]
-        Ingest["python -m rag.ingest"]
+        Ingest["python -m rag.ingest<br/>demo + indexed JSON"]
         Embed["OpenAI embeddings<br/>nếu provider + credential khả dụng"]
         Store["SQLAlchemyVectorStore.upsert"]
         Docs["rag_documents"]
@@ -112,6 +113,7 @@ flowchart LR
         Model["Question generation<br/>LLM nếu bật, deterministic fallback"]
 
         Demo --> Ingest
+        Indexed --> Ingest
         Ingest --> Store
         Embed --> Store
         Store --> Docs
@@ -127,7 +129,7 @@ flowchart LR
     classDef active fill:#e8f5e9,stroke:#2e7d32,color:#111
     classDef disconnected fill:#fff3e0,stroke:#ef6c00,color:#111
     classDef optional fill:#f5f5f5,stroke:#616161,stroke-dasharray:5 5,color:#111
-    class PDFs,Docling,Parsed,IndexScript,Indexed disconnected
+    class PDFs,Docling,Parsed,IndexScript disconnected
     class Demo,Ingest,Store,Docs,Query,Retrieve,Lexical,Fusion,Rerank,Context,Model active
     class Embed,Dense optional
 ```
@@ -172,7 +174,9 @@ flowchart TD
 
 - **JD/CV:** `POST /api/v1/interview/start` chỉ nhận `candidate_id`, `position`, `mode`;
   Candidate API có `resume_url` nhưng không có upload/parse/attach CV hoặc JD vào interview.
-  Graph hiện tạo plan competency mặc định, không xây interview plan từ tài liệu ứng viên.
+  Agent có phương thức lập kế hoạch riêng nhận JD/CV, truy xuất context theo bốn source type
+  và xác thực đúng 10 câu hỏi; phương thức này chưa được nối vào endpoint hoặc luồng bắt đầu
+  interview, vốn vẫn khởi tạo competency plan mặc định.
 - **Sinh câu hỏi:** graph có routing adaptive (`DIG_DEEPER`, đổi competency, tăng/giảm độ khó,
   `FINISH`) và sinh câu hỏi theo RAG context. LLM dùng được nếu cấu hình; câu mở đầu và fallback
   vẫn deterministic. Không có bảo đảm tạo đúng 10 câu.
@@ -182,9 +186,11 @@ flowchart TD
 - **Đánh giá/lưu:** hiện có rubric abstraction, evaluator deterministic mặc định và LLMEvaluator
   tùy provider. Turn answer, evidence, assessment, competency state và question được lưu; answer
   text từ STT là nội dung turn, chưa có bản ghi transcript/audio riêng.
-- **HR report:** API xuất JSON/TXT và tổng hợp điểm/evidence/gaps/recommendation. `ReportService`
-  hiện không đưa danh sách câu hỏi và câu trả lời theo từng turn vào payload report, dù turn và
-  question được lưu riêng.
+- **HR report:** API xuất JSON/TXT từ interview session đã lưu, gồm đánh giá theo competency,
+  rubric, score/status, câu trả lời, evidence quote đã đối chiếu với câu trả lời, strengths/gaps
+  và trạng thái follow-up. Session chưa hoàn tất được đánh dấu partial; thiếu dữ liệu được ghi rõ
+  là unavailable/not_recorded thay vì suy đoán. Export retry dùng lại cùng đường dẫn theo session
+  và định dạng. Không suy luận tính cách hoặc cảm xúc từ video.
 - **Mâu thuẫn nghiệp vụ cần chủ sản phẩm quyết định:** yêu cầu đang nêu 10 câu nhưng pass là ít
   nhất 3/5 câu. Cấu hình hiện tại mặc định `DEFAULT_NUM_QUESTIONS = 8`; graph có budget/thời lượng
   và điều kiện competency score tối thiểu 3 cho các competency trong plan, không phải điều kiện
@@ -205,9 +211,9 @@ flowchart TD
 | `evaluation/service.py` | Evidence/rubric/score, deterministic và LLM evaluator |
 | `integrations/llm_providers/provider.py` | Optional OpenAI-compatible LLM và structured output |
 | `rag/service.py` | BM25, dense retrieval, RRF, reranker, SQLAlchemy vector store, context builder |
-| `rag/ingest.py`, `rag/corpus_loader.py` | Nạp demo JSON vào `rag_documents` |
+| `rag/ingest.py`, `rag/corpus_loader.py`, `rag/indexed_corpus_loader.py` | Nạp demo và indexed JSON chunks vào `rag_documents` |
 | `rag/chunking/extract_with_docling.py` | Pipeline PDF → Markdown trong `data_parser` |
-| `rag/chunking/run_indexing.py` | Index Markdown thành JSON; hiện chỉ chạy category `cv` |
+| `rag/chunking/run_indexing.py` | Index Markdown thành JSON theo document type được hỗ trợ |
 | `voice/session.py`, `voice/real_providers.py` | Audio session/STT/TTS orchestration và provider adapters |
 | `services/report_service.py` | Tổng hợp kết quả đã lưu, xuất JSON/TXT |
 | `tests/unit/test_adaptive_graph.py`, `test_evaluation_domain.py` | Test graph và evaluation/persistence |
@@ -217,15 +223,15 @@ flowchart TD
 
 1. Chốt business contract về số câu, “3/5” là câu hỏi hay competency, điều kiện kết thúc và score
    threshold; hiện default là 8 và hành vi khác tiêu chí mục tiêu.
-2. Bổ sung input/association có kiểm soát cho JD và CV; parse, chunk, metadata/version, rồi nối
-   outputs `data_parser`/`indexed` vào pipeline ingest runtime thay vì chỉ ingest corpus demo.
-3. Xác nhận `company.pdf` là nguồn company knowledge cần dùng; ingest có attribution và metadata
-   scope phù hợp, rồi kiểm chứng company chunks thực sự nằm trong `rag_documents` và được retrieval
-   trong interview. Hiện file tồn tại nhưng chưa được `rag.ingest` dùng.
+2. Bổ sung input/association có kiểm soát cho JD và CV vào interview; hiện indexed JSON được nạp
+   vào RAG cùng demo corpus nhưng chưa được gắn với ứng viên/JD của một phiên phỏng vấn.
+3. Kiểm chứng pipeline bằng PDF thật và đánh giá attribution/scope của các tài liệu company thật;
+   test sample hiện xác nhận JSON chunks được lưu và truy xuất theo document type, không xác nhận
+   nội dung PDF hoặc retrieval trong interview.
 4. Quyết định rubric theo JD/competency và nối rubric/context đã truy xuất vào evaluation; hiện
    service tạo rubric mặc định theo competency.
-5. Bổ sung Q&A/transcript theo từng turn vào báo cáo HR; giữ distinction giữa partial transcript
-   không lưu và final answer/transcript đã persist.
+5. Kiểm chứng Q&A/report với dữ liệu interview và rubric thật; giữ distinction giữa partial
+   transcript không lưu và final answer/transcript đã persist. Sample/mock report flow đã được test.
 6. Nếu yêu cầu đa phương thức là bắt buộc, xác minh live provider/config STT/TTS; VAD hiện fake,
    voice default fake, và video chưa có implementation.
 7. Thêm integration/evaluation tests cho dữ liệu JD/CV/company thực, retrieval quality theo nguồn,
