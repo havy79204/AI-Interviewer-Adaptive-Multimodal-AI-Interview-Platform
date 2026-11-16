@@ -28,6 +28,7 @@ from infrastructure.redis_store import RedisClient, RedisStore
 from integrations.llm_providers.provider import LLMProviderError, provider_from_settings
 from rag.service import RAGQuestionService
 from services.database import (
+    CandidateCVDocumentRecord,
     CandidateRecord,
     InterviewRecord,
     InterviewScheduleRecord,
@@ -231,6 +232,7 @@ class InterviewService:
                         "Campaign hiring target has already been achieved"
                     )
                 state = self._campaign_interview_state(
+                    session=session,
                     candidate_id=candidate.id,
                     campaign=campaign,
                     application_id=application_id,
@@ -345,6 +347,7 @@ class InterviewService:
     def _campaign_interview_state(
         self,
         *,
+        session,
         candidate_id: str,
         campaign: RecruitmentCampaignRecord,
         application_id: str,
@@ -360,6 +363,11 @@ class InterviewService:
             raise CampaignInterviewNotReadyError(
                 "Approved campaign objective does not specify a role"
             )
+        candidate_cv = self._get_candidate_cv(
+            session,
+            application_id=application_id,
+            organization_id=organization_id,
+        )
         rubric_snapshot = json.loads(campaign.competency_rubric_json or "[]")
         competencies = list(
             dict.fromkeys(
@@ -379,6 +387,16 @@ class InterviewService:
             position=position,
             competencies=competencies,
         )
+
+        state["candidate_cv"] = candidate_cv
+        state["job_description"] = {
+            "position": position,
+            "objective": {
+                "seniority": objective.seniority,
+                "requested_role": objective.requested_role,
+            },
+            "rubric": rubric_snapshot,
+        }
         now = datetime.now(UTC).isoformat()
         state.update(
             {
@@ -607,6 +625,8 @@ class InterviewService:
                     ],
                     competency_state=state.get("skills", {}),
                     identified_gaps=state.get("identified_gaps", []),
+                    candidate_cv=state.get("candidate_cv", {}),
+                    job_description=state.get("job_description", {}),
                 )
                 try:
                     result = self.evaluator.evaluate_result(
@@ -690,3 +710,38 @@ class InterviewService:
             "current_question": interview.current_question,
         })
         return state
+    def _get_candidate_cv(
+        self,
+        session,
+        *,
+        application_id: str,
+        organization_id: str,
+    ) -> dict[str, Any]:
+        document = session.execute(
+            select(CandidateCVDocumentRecord).where(
+                CandidateCVDocumentRecord.application_id == application_id,
+                CandidateCVDocumentRecord.organization_id == organization_id,
+                CandidateCVDocumentRecord.parse_status == "parsed",
+            )
+        ).scalar_one_or_none()
+
+        if document is None:
+            return {}
+
+        parsed_cv: dict[str, Any] = {}
+
+        if document.parsed_output_json:
+            try:
+                parsed_data = json.loads(document.parsed_output_json)
+                if isinstance(parsed_data, dict):
+                    parsed_cv = parsed_data
+                elif isinstance(parsed_data, list):
+                    parsed_cv = {"items": parsed_data}
+            except (json.JSONDecodeError, TypeError):
+                parsed_cv = {}
+
+        # Dùng extracted_text làm fallback nếu JSON không có nội dung.
+        if not parsed_cv and document.extracted_text:
+            parsed_cv = {"raw_text": document.extracted_text}
+
+        return parsed_cv
